@@ -1,0 +1,45 @@
+name: Build AETHER Native Android APK (No PC Needed)
+
+on:
+  workflow_dispatch:
+
+jobs:
+  build-android-apk:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout AETHER repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js 20
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Setup Java 21 (Required for Capacitor 7 & Android SDK 35)
+        uses: actions/setup-java@v4
+        with:
+          distribution: 'temurin'
+          java-version: '21'
+
+      - name: Install npm packages & build AETHER web app
+        run: |
+          npm install
+          npm run build
+
+      - name: Generate Android project & auto-wire Health Connect + Kotlin + Icons
+        run: |
+          npx cap add android
+          node scripts/configure-android.mjs
+          npx cap sync android
+
+      - name: Compile installable Android APK
+        working-directory: android
+        run: |
+          chmod +x gradlew
+          ./gradlew assembleDebug
+
+      - name: Upload ready-to-install AETHER APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: AETHER-Android-APK
+          path: android/app/build/outputs/apk/debug/app-debug.apk
