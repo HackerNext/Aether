@@ -18,7 +18,7 @@ export default {
         mono: ['JetBrains Mono', 'ui-monospace', 'SFMono-Regular', 'monospace'],
       },
       boxShadow: {
-        glass: '0 12px 40px -12px rgba(0, 0, 0, 0.75)',
+        glass: '0 12px 40px -12px rgba(0, 0, 0, 0.78)',
         emeraldGlow: '0 0 28px rgba(16, 185, 129, 0.28)',
         cyanGlow: '0 0 28px rgba(6, 182, 212, 0.28)',
         indigoGlow: '0 0 28px rgba(129, 140, 248, 0.28)',

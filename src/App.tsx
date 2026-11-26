@@ -1,17 +1,17 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import {
-  Activity,
   BatteryMedium,
-  ChevronRight,
   Compass,
   Plus,
   RefreshCw,
   Shield,
   TrendingUp,
+  AlertTriangle,
 } from 'lucide-react';
 import {
   ActiveTab,
   AetherAppState,
+  DailyBiometricRecord,
   DrilldownMetricType,
   HabitDefinition,
   LabBiomarker,
@@ -21,16 +21,12 @@ import {
   WearableBrandId,
   WorkoutRecord,
 } from './types/health';
-import {
-  clearAetherState,
-  loadAetherState,
-  saveAetherState,
-} from './services/storageService';
+import { clearAetherState, loadAetherState, saveAetherState } from './services/storageService';
 import {
   BleLiveTelemetry,
   DEFAULT_HABIT_DEFINITIONS,
-  DEFAULT_LAB_BIOMARKERS,
-  generateRealisticBiometricHistory,
+  DEMO_LAB_BIOMARKERS,
+  generateDemoBiometricHistory,
   HealthConnectManager,
   ImportedHealthRow,
   WEARABLE_PRESETS,
@@ -42,7 +38,8 @@ import {
   computeDailyStrain,
   computeHabitCorrelations,
   computeSleepDebtPlan,
-  formatMinutesToHm,
+  createEmptyDailyRecord,
+  getTodayDateStr,
 } from './utils/biometricsEngine';
 import {
   askAetherCoach,
@@ -51,6 +48,7 @@ import {
   generateOfflineMorningBriefing,
 } from './services/aiCoachService';
 import { RadialGauges } from './components/RadialGauges';
+import { DetailedFeatureSections } from './components/DetailedFeatureSections';
 import { MetricDrilldownSheet } from './components/MetricDrilldownSheet';
 import { AICoachDrawer } from './components/AICoachDrawer';
 import { TimelineFeed } from './components/TimelineFeed';
@@ -59,18 +57,19 @@ import { HabitCorrelations } from './components/HabitCorrelations';
 import { QuickLogHub } from './components/QuickLogHub';
 import { DeviceSyncWizard } from './components/DeviceSyncWizard';
 import { LabVault } from './components/LabVault';
+import { ManualVitalsPayload } from './components/ManualVitalsLogger';
 
-function createInitialState(): AetherAppState {
+function createCleanInitialState(): AetherAppState {
   const redmi = WEARABLE_PRESETS[0];
   return {
     profile: {
-      name: 'Athlete',
-      chronologicalAge: 27,
-      maxHrBpm: 193,
-      bodyWeightKg: 74,
+      name: 'User',
+      chronologicalAge: 20,
+      maxHrBpm: 200,
+      bodyWeightKg: 59,
       targetWakeTime: '06:45',
       dailyWaterGoalMl: 3000,
-      dailyCalorieGoal: 2450,
+      dailyCalorieGoal: 2300,
       geminiApiKey: '',
     },
     device: {
@@ -78,9 +77,9 @@ function createInitialState(): AetherAppState {
       name: redmi.name,
       ecosystem: redmi.ecosystem,
       transport: redmi.transport,
-      connected: true,
-      batteryPct: 84,
-      lastSyncedIso: new Date(Date.now() - 4 * 60000).toISOString(),
+      connected: false,
+      batteryPct: null,
+      lastSyncedIso: null,
       capabilities: {
         heartRate: 'active',
         sleepStages: 'active',
@@ -88,78 +87,104 @@ function createInitialState(): AetherAppState {
         overnightHrv: 'proxy_mode',
         stepsAndCalories: 'active',
       },
+      healthConnect: {
+        sdkAvailable: false,
+        statusLabel: 'NOT_CHECKED',
+        grantedCount: 0,
+        totalRequested: 8,
+        lastRawRecordCount: 0,
+        detectedSources: [],
+      },
     },
-    demoSimulatorEnabled: true,
-    records: generateRealisticBiometricHistory(90, false),
+    demoSimulatorEnabled: false,
+    records: [],
     habitDefinitions: DEFAULT_HABIT_DEFINITIONS,
-    labBiomarkers: DEFAULT_LAB_BIOMARKERS,
+    labBiomarkers: [],
     coachHistory: [
       {
-        id: 'welcome_msg',
+        id: 'welcome_clean',
         role: 'assistant',
         content:
-          'AETHER telemetry online. Ask me about today’s training strain target, sleep debt payback, Redmi Watch 5 Lite proxy calibration, or your top habit correlations.',
+          'AETHER starts clean with zero fake data. Connect Android Health Connect in the Vault tab (for Redmi Watch 5 Lite / Mi Fitness) or log your own vitals, habits, and workouts in + Log.',
         timestampIso: new Date().toISOString(),
       },
     ],
   };
 }
 
-function formatSyncAgo(iso: string): string {
+function formatSyncAgo(iso: string | null): string {
+  if (!iso) return 'Not synced';
   const diffMin = Math.max(0, Math.round((Date.now() - new Date(iso).getTime()) / 60000));
-  if (diffMin === 0) return 'just now';
-  if (diffMin < 60) return `${diffMin}m ago`;
-  return `${Math.floor(diffMin / 60)}h ago`;
-}
-
-interface BeforeInstallPromptEvent extends Event {
-  prompt: () => Promise<void>;
+  if (diffMin === 0) return 'Synced just now';
+  if (diffMin < 60) return `Synced ${diffMin}m ago`;
+  return `Synced ${Math.floor(diffMin / 60)}h ago`;
 }
 
 export default function App() {
-  const [state, setState] = useState<AetherAppState>(() => loadAetherState() ?? createInitialState());
+  const [state, setState] = useState<AetherAppState>(() => loadAetherState() ?? createCleanInitialState());
   const [activeTab, setActiveTab] = useState<ActiveTab>('today');
   const [drilldownMetric, setDrilldownMetric] = useState<DrilldownMetricType>(null);
   const [isSyncing, setIsSyncing] = useState(false);
   const [syncMessage, setSyncMessage] = useState('');
   const [isRefreshingBriefing, setIsRefreshingBriefing] = useState(false);
-  const [deferredInstallPrompt, setDeferredInstallPrompt] =
-    useState<BeforeInstallPromptEvent | null>(null);
 
-  // Persist every change cleanly inside isolated `aether_os_v1::` namespace
+  // Persist real user state cleanly inside aether_os_v2::
   useEffect(() => {
     saveAetherState(state);
   }, [state]);
 
-  // Capture Android Chrome PWA install prompt
+  // Check real Android Health Connect availability on launch (never fakes connected!)
   useEffect(() => {
-    const handler = (e: Event) => {
-      e.preventDefault();
-      setDeferredInstallPrompt(e as BeforeInstallPromptEvent);
-    };
-    window.addEventListener('beforeinstallprompt', handler);
-    return () => window.removeEventListener('beforeinstallprompt', handler);
+    HealthConnectManager.checkStatus().then((diag) => {
+      setState((prev) => ({
+        ...prev,
+        device: {
+          ...prev.device,
+          connected: diag.sdkAvailable && diag.grantedCount > 0 ? prev.device.connected : false,
+          healthConnect: {
+            ...prev.device.healthConnect,
+            sdkAvailable: diag.sdkAvailable,
+            statusLabel: diag.statusLabel,
+            grantedCount: diag.grantedCount,
+            totalRequested: diag.totalRequested,
+          },
+        },
+      }));
+    });
   }, []);
 
-  const today = state.records[state.records.length - 1];
+  // Optional Demo Preview data is kept strictly in memory — NEVER pollutes real saved records or Lab Vault!
+  const demoRecords = useMemo(
+    () =>
+      state.demoSimulatorEnabled
+        ? generateDemoBiometricHistory(30, state.device.capabilities.overnightHrv === 'active')
+        : [],
+    [state.demoSimulatorEnabled, state.device.capabilities.overnightHrv]
+  );
 
-  const recovery = useMemo(() => computeAdaptiveRecovery(state.records), [state.records]);
-  const strain = useMemo(
-    () => computeDailyStrain(today, recovery.score),
-    [today, recovery.score]
-  );
+  const activeRecords = state.demoSimulatorEnabled ? demoRecords : state.records;
+  const activeBiomarkers = state.demoSimulatorEnabled ? DEMO_LAB_BIOMARKERS : state.labBiomarkers;
+  const todayStr = getTodayDateStr();
+  const today: DailyBiometricRecord | null = useMemo(() => {
+    if (activeRecords.length === 0) return null;
+    const exact = activeRecords.find((r) => r.date === todayStr);
+    return exact ?? activeRecords[activeRecords.length - 1];
+  }, [activeRecords, todayStr]);
+
+  const recovery = useMemo(() => computeAdaptiveRecovery(activeRecords), [activeRecords]);
+  const strain = useMemo(() => computeDailyStrain(today, recovery.score), [today, recovery.score]);
   const sleepPlan = useMemo(
-    () => computeSleepDebtPlan(state.records, state.profile.targetWakeTime),
-    [state.records, state.profile.targetWakeTime]
+    () => computeSleepDebtPlan(activeRecords, state.profile.targetWakeTime),
+    [activeRecords, state.profile.targetWakeTime]
   );
-  const acwr = useMemo(() => computeCardioLoadAcwr(state.records), [state.records]);
+  const acwr = useMemo(() => computeCardioLoadAcwr(activeRecords), [activeRecords]);
   const bioAge = useMemo(
-    () => computeBiologicalAge(state.records, state.profile, 30),
-    [state.records, state.profile]
+    () => computeBiologicalAge(activeRecords, state.profile, 30),
+    [activeRecords, state.profile]
   );
   const correlations = useMemo(
-    () => computeHabitCorrelations(state.records, state.habitDefinitions),
-    [state.records, state.habitDefinitions]
+    () => computeHabitCorrelations(activeRecords, state.habitDefinitions),
+    [activeRecords, state.habitDefinitions]
   );
 
   const aiContext: BiometricContextBundle = useMemo(
@@ -181,47 +206,49 @@ export default function App() {
     generateOfflineMorningBriefing(aiContext)
   );
 
-  // Keep offline briefing fresh whenever core scores shift
   useEffect(() => {
     if (briefing.generatedBy !== 'gemini') {
       setBriefing(generateOfflineMorningBriefing(aiContext));
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [recovery.score, strain.score, sleepPlan.rolling7dDebtMin, state.device.id]);
+  }, [recovery.score, strain.score, sleepPlan.rolling7dDebtMin, state.demoSimulatorEnabled, activeRecords.length]);
 
-  const mutateToday = (updater: (rec: typeof today) => typeof today) => {
+  const mutateTodayReal = (updater: (rec: DailyBiometricRecord) => DailyBiometricRecord) => {
     setState((prev) => {
-      const nextRecords = [...prev.records];
-      const idx = nextRecords.length - 1;
-      nextRecords[idx] = updater(nextRecords[idx]);
-      return { ...prev, records: nextRecords };
+      const dateKey = getTodayDateStr();
+      const idx = prev.records.findIndex((r) => r.date === dateKey);
+      const next = [...prev.records];
+      if (idx >= 0) {
+        next[idx] = updater(next[idx]);
+      } else {
+        next.push(updater(createEmptyDailyRecord(dateKey, 'manual')));
+        next.sort((a, b) => a.date.localeCompare(b.date));
+      }
+      return { ...prev, demoSimulatorEnabled: false, records: next };
     });
   };
 
   const handleSyncHealthConnect = async () => {
     if (isSyncing) return;
     setIsSyncing(true);
+    setSyncMessage('');
     try {
-      const res = await HealthConnectManager.syncNow(state.device, today);
+      const res = await HealthConnectManager.requestPermissionsAndSync(
+        state.profile.maxHrBpm,
+        state.records
+      );
       setSyncMessage(res.summary);
-      if (res.success && res.updatedTodayPatch) {
-        setState((prev) => {
-          const nextRecords = [...prev.records];
-          const lastIdx = nextRecords.length - 1;
-          nextRecords[lastIdx] = {
-            ...nextRecords[lastIdx],
-            ...res.updatedTodayPatch,
-          };
-          return {
-            ...prev,
-            device: {
-              ...prev.device,
-              lastSyncedIso: new Date().toISOString(),
-            },
-            records: nextRecords,
-          };
-        });
-      }
+      setState((prev) => ({
+        ...prev,
+        demoSimulatorEnabled: res.success ? false : prev.demoSimulatorEnabled,
+        device: {
+          ...prev.device,
+          connected: res.success,
+          lastSyncedIso: res.success ? new Date().toISOString() : prev.device.lastSyncedIso,
+          healthConnect: res.diagnostics,
+        },
+        records: res.success && res.syncedRecords ? res.syncedRecords : prev.records,
+      }));
     } finally {
       setIsSyncing(false);
     }
@@ -230,30 +257,20 @@ export default function App() {
   const handleSelectWearable = (brandId: WearableBrandId) => {
     const preset = WEARABLE_PRESETS.find((p) => p.id === brandId);
     if (!preset) return;
-    setState((prev) => {
-      const nextRecords = prev.records.map((rec, i) => ({
-        ...rec,
-        overnightHrvMs: preset.supportsOvernightHrv
-          ? rec.overnightHrvMs ?? Math.round(62 + Math.sin(i * 0.45) * 11)
-          : null,
-      }));
-      return {
-        ...prev,
-        device: {
-          ...prev.device,
-          id: preset.id,
-          name: preset.name,
-          ecosystem: preset.ecosystem,
-          transport: preset.transport,
-          lastSyncedIso: new Date().toISOString(),
-          capabilities: {
-            ...prev.device.capabilities,
-            overnightHrv: preset.supportsOvernightHrv ? 'active' : 'proxy_mode',
-          },
+    setState((prev) => ({
+      ...prev,
+      device: {
+        ...prev.device,
+        id: preset.id,
+        name: preset.name,
+        ecosystem: preset.ecosystem,
+        transport: preset.transport,
+        capabilities: {
+          ...prev.device.capabilities,
+          overnightHrv: preset.supportsOvernightHrv ? 'active' : 'proxy_mode',
         },
-        records: nextRecords,
-      };
-    });
+      },
+    }));
   };
 
   const handleBleTelemetry = (telemetry: BleLiveTelemetry) => {
@@ -261,6 +278,9 @@ export default function App() {
       ...prev,
       device: {
         ...prev.device,
+        connected: true,
+        name: telemetry.deviceName,
+        transport: 'web_bluetooth_ble',
         liveBleBpm: telemetry.bpm,
         liveBleRrMs: telemetry.rrIntervalMs,
         batteryPct: telemetry.batteryPct ?? prev.device.batteryPct,
@@ -273,36 +293,85 @@ export default function App() {
     setState((prev) => {
       const map = new Map(prev.records.map((r) => [r.date, r]));
       for (const row of rows) {
-        const existing = map.get(row.date);
-        if (existing) {
-          const deepMin = row.deepMin ?? existing.sleep.stages.deepMin;
-          const remMin = row.remMin ?? existing.sleep.stages.remMin;
-          const lightMin = row.lightMin ?? existing.sleep.stages.lightMin;
-          const awakeMin = row.awakeMin ?? existing.sleep.stages.awakeMin;
-          const totalSleepMin = deepMin + remMin + lightMin;
-          const timeInBedMin = totalSleepMin + awakeMin;
-          map.set(row.date, {
-            ...existing,
-            restingHrBpm: row.restingHrBpm ?? existing.restingHrBpm,
-            overnightHrvMs:
-              row.overnightHrvMs !== undefined ? row.overnightHrvMs : existing.overnightHrvMs,
-            spo2Pct: row.spo2Pct ?? existing.spo2Pct,
-            steps: row.steps ?? existing.steps,
-            activeCaloriesKcal: row.activeCaloriesKcal ?? existing.activeCaloriesKcal,
-            sleep: {
-              ...existing.sleep,
-              totalSleepMin,
-              timeInBedMin,
-              efficiencyPct: Number(((totalSleepMin / Math.max(1, timeInBedMin)) * 100).toFixed(1)),
-              stages: { awakeMin, lightMin, deepMin, remMin },
-              source: 'Imported Health Export',
-            },
-          });
-        }
+        const existing = map.get(row.date) ?? createEmptyDailyRecord(row.date, 'imported');
+        const deepMin = row.deepMin ?? existing.sleep?.stages.deepMin ?? 0;
+        const remMin = row.remMin ?? existing.sleep?.stages.remMin ?? 0;
+        const lightMin = row.lightMin ?? existing.sleep?.stages.lightMin ?? 0;
+        const awakeMin = row.awakeMin ?? existing.sleep?.stages.awakeMin ?? 0;
+        const totalSleepMin = deepMin + remMin + lightMin;
+        const timeInBedMin = totalSleepMin + awakeMin;
+
+        map.set(row.date, {
+          ...existing,
+          restingHrBpm: row.restingHrBpm ?? existing.restingHrBpm,
+          overnightHrvMs: row.overnightHrvMs !== undefined ? row.overnightHrvMs : existing.overnightHrvMs,
+          spo2Pct: row.spo2Pct ?? existing.spo2Pct,
+          steps: row.steps ?? existing.steps,
+          activeCaloriesKcal: row.activeCaloriesKcal ?? existing.activeCaloriesKcal,
+          sleep:
+            totalSleepMin > 0
+              ? {
+                  id: `imp_slp_${row.date}`,
+                  date: row.date,
+                  bedtimeIso: null,
+                  wakeTimeIso: null,
+                  totalSleepMin,
+                  timeInBedMin,
+                  efficiencyPct: Number(((totalSleepMin / Math.max(1, timeInBedMin)) * 100).toFixed(1)),
+                  stages: { awakeMin, lightMin, deepMin, remMin },
+                  source: 'Imported File',
+                }
+              : existing.sleep,
+          dataOrigin: 'imported',
+        });
       }
       return {
         ...prev,
+        demoSimulatorEnabled: false,
         records: Array.from(map.values()).sort((a, b) => a.date.localeCompare(b.date)),
+      };
+    });
+  };
+
+  const handleExportBackup = () => {
+    const blob = new Blob([JSON.stringify(state, null, 2)], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `aether-backup-${getTodayDateStr()}.json`;
+    a.click();
+    URL.revokeObjectURL(url);
+  };
+
+  const handleSaveManualVitals = (payload: ManualVitalsPayload) => {
+    mutateTodayReal((rec) => {
+      const totalSleepMin = Math.round(payload.sleepHours * 60);
+      const lightMin = Math.max(0, totalSleepMin - payload.deepMin - payload.remMin);
+      const timeInBedMin = totalSleepMin + payload.awakeMin;
+      return {
+        ...rec,
+        restingHrBpm: payload.restingHrBpm ?? rec.restingHrBpm,
+        spo2Pct: payload.spo2Pct ?? rec.spo2Pct,
+        steps: payload.steps > 0 ? payload.steps : rec.steps,
+        sleep:
+          totalSleepMin > 0
+            ? {
+                id: `man_slp_${rec.date}`,
+                date: rec.date,
+                bedtimeIso: null,
+                wakeTimeIso: null,
+                totalSleepMin,
+                timeInBedMin,
+                efficiencyPct: Number(((totalSleepMin / Math.max(1, timeInBedMin)) * 100).toFixed(1)),
+                stages: {
+                  awakeMin: payload.awakeMin,
+                  lightMin,
+                  deepMin: payload.deepMin,
+                  remMin: payload.remMin,
+                },
+                source: 'Manual Entry',
+              }
+            : rec.sleep,
       };
     });
   };
@@ -310,8 +379,7 @@ export default function App() {
   const handleRefreshBriefing = async () => {
     setIsRefreshingBriefing(true);
     try {
-      const fresh = await generateGeminiBriefing(aiContext);
-      setBriefing(fresh);
+      setBriefing(await generateGeminiBriefing(aiContext));
     } finally {
       setIsRefreshingBriefing(false);
     }
@@ -326,94 +394,27 @@ export default function App() {
     };
     setState((prev) => ({ ...prev, coachHistory: [...prev.coachHistory, userMsg] }));
     const reply = await askAetherCoach(question, aiContext);
-    const botMsg = {
-      id: `a_${Date.now()}`,
-      role: 'assistant' as const,
-      content: reply,
-      timestampIso: new Date().toISOString(),
-    };
-    setState((prev) => ({ ...prev, coachHistory: [...prev.coachHistory, botMsg] }));
-  };
-
-  const handleToggleHabit = (habitId: string) => {
-    mutateToday((rec) => {
-      const exists = rec.habitsLogged.includes(habitId);
-      return {
-        ...rec,
-        habitsLogged: exists
-          ? rec.habitsLogged.filter((id) => id !== habitId)
-          : [...rec.habitsLogged, habitId],
-      };
-    });
-  };
-
-  const handleAddCustomHabit = (label: string, category: HabitDefinition['category']) => {
-    const id = `custom_${Date.now()}`;
-    setState((prev) => {
-      const nextRecords = [...prev.records];
-      const last = nextRecords.length - 1;
-      nextRecords[last] = {
-        ...nextRecords[last],
-        habitsLogged: [...nextRecords[last].habitsLogged, id],
-      };
-      return {
-        ...prev,
-        habitDefinitions: [
-          ...prev.habitDefinitions,
-          { id, label, category, icon: 'Sparkles', expectedDirection: 'neutral' },
-        ],
-        records: nextRecords,
-      };
-    });
-  };
-
-  const handleLogWorkout = (workout: WorkoutRecord) => {
-    mutateToday((rec) => ({
-      ...rec,
-      workouts: [workout, ...rec.workouts],
-      activeCaloriesKcal: rec.activeCaloriesKcal + workout.activeCaloriesKcal,
+    setState((prev) => ({
+      ...prev,
+      coachHistory: [
+        ...prev.coachHistory,
+        { id: `a_${Date.now()}`, role: 'assistant', content: reply, timestampIso: new Date().toISOString() },
+      ],
     }));
   };
 
-  const handleLogMeal = (meal: MealRecord) => {
-    mutateToday((rec) => ({
-      ...rec,
-      meals: [meal, ...rec.meals],
-    }));
-  };
-
-  const handleAddWater = (ml: number) => {
-    mutateToday((rec) => ({
-      ...rec,
-      hydration: { ...rec.hydration, waterMl: rec.hydration.waterMl + ml },
-    }));
-  };
-
-  const handleAddCaffeine = (mg: number) => {
-    mutateToday((rec) => ({
-      ...rec,
-      hydration: {
-        ...rec.hydration,
-        caffeineMg: rec.hydration.caffeineMg + mg,
-        lastCaffeineIso: new Date().toISOString(),
-      },
-    }));
-  };
-
-  const handleTriggerPwaInstall = async () => {
-    if (!deferredInstallPrompt) return;
-    await deferredInstallPrompt.prompt();
-    setDeferredInstallPrompt(null);
-  };
+  const statusText = state.demoSimulatorEnabled
+    ? 'DEMO MODE • Viewing Sample Data'
+    : state.device.connected
+      ? `${state.device.name} • ${formatSyncAgo(state.device.lastSyncedIso)}`
+      : 'No Wearable Connected • Tap to Connect Health Connect';
 
   return (
     <div className="min-h-screen bg-[#07090D] text-slate-100">
-      {/* Subtle Ambient Top Horizon Glow */}
       <div className="pointer-events-none fixed inset-x-0 top-0 h-56 bg-gradient-to-b from-emerald-500/[0.06] via-cyan-500/[0.02] to-transparent" />
 
-      {/* Mobile-First Centered Operating System Shell (optimized 360px–430px & clean desktop frame) */}
       <div className="relative mx-auto flex min-h-screen w-full max-w-[440px] flex-col px-4 pb-28 pt-4">
-        {/* Top Brand Header & Connected Wearable Status Pill */}
+        {/* Top Header & 100% Honest Connection Status Pill */}
         <header className="mb-4 space-y-3">
           <div className="flex items-center justify-between px-0.5">
             <div className="flex items-center gap-2">
@@ -422,134 +423,74 @@ export default function App() {
               </div>
               <span className="text-sm font-bold tracking-[0.22em] text-white">AETHER</span>
             </div>
-            <span className="tabular-mono text-[11px] text-slate-400">
+            <span className="tabular-mono text-xs text-slate-400">
               {new Date().toLocaleDateString([], { weekday: 'short', month: 'short', day: 'numeric' })}
             </span>
           </div>
 
-          {/* Live Wearable Status Pill */}
           <button
             type="button"
-            onClick={handleSyncHealthConnect}
-            className="aether-glass flex w-full items-center justify-between rounded-full px-3.5 py-2 text-left transition hover:border-white/15 active:scale-[0.99]"
+            onClick={() => (state.device.connected ? handleSyncHealthConnect() : setActiveTab('devices'))}
+            className={`aether-glass flex w-full items-center justify-between rounded-full px-4 py-2.5 text-left transition active:scale-[0.99] ${
+              state.demoSimulatorEnabled
+                ? 'border-amber-400/40 bg-amber-500/10'
+                : state.device.connected
+                  ? 'border-emerald-500/25'
+                  : 'border-white/10'
+            }`}
           >
-            <div className="flex min-w-0 items-center gap-2">
-              <span className="relative flex h-2.5 w-2.5 shrink-0">
-                <span className="animate-pulse-ring absolute inline-flex h-full w-full rounded-full bg-emerald-400" />
-                <span className="relative inline-flex h-2.5 w-2.5 rounded-full bg-emerald-400" />
-              </span>
-              <span className="truncate text-[11px] font-medium text-slate-200">
-                {state.device.name} • Synced {formatSyncAgo(state.device.lastSyncedIso)} via{' '}
-                {state.device.transport === 'web_bluetooth_ble' ? 'BLE' : 'Health Connect'}
-              </span>
+            <div className="flex min-w-0 items-center gap-2.5">
+              {state.demoSimulatorEnabled ? (
+                <AlertTriangle className="h-3.5 w-3.5 shrink-0 text-amber-400" />
+              ) : state.device.connected ? (
+                <span className="relative flex h-2.5 w-2.5 shrink-0">
+                  <span className="animate-pulse-ring absolute inline-flex h-full w-full rounded-full bg-emerald-400" />
+                  <span className="relative inline-flex h-2.5 w-2.5 rounded-full bg-emerald-400" />
+                </span>
+              ) : (
+                <span className="h-2.5 w-2.5 shrink-0 rounded-full bg-slate-500" />
+              )}
+              <span className="truncate text-xs font-medium text-slate-200">{statusText}</span>
             </div>
+
             <div className="ml-2 flex shrink-0 items-center gap-2 text-slate-400">
-              <span className="tabular-mono inline-flex items-center gap-1 text-[11px] text-slate-300">
-                <BatteryMedium className="h-3.5 w-3.5 text-emerald-400" />
-                {state.device.batteryPct}%
-              </span>
-              <RefreshCw className={`h-3.5 w-3.5 ${isSyncing ? 'animate-spin text-emerald-400' : ''}`} />
+              {/* Battery % is ONLY shown if a real BLE sensor reports 0x180F battery! */}
+              {state.device.connected && state.device.batteryPct !== null && (
+                <span className="tabular-mono inline-flex items-center gap-1 text-xs text-emerald-300">
+                  <BatteryMedium className="h-3.5 w-3.5" />
+                  {state.device.batteryPct}%
+                </span>
+              )}
+              {state.device.connected && (
+                <RefreshCw className={`h-3.5 w-3.5 ${isSyncing ? 'animate-spin text-emerald-400' : ''}`} />
+              )}
             </div>
           </button>
         </header>
 
-        {/* Active Tab Viewport */}
-        <main className="flex-1 space-y-4">
+        <main className="flex-1 space-y-5">
           {activeTab === 'today' && (
             <>
-              {/* 3 Futuristic Radial Telemetry Gauges */}
               <RadialGauges
                 recovery={recovery}
                 strain={strain}
                 sleepPlan={sleepPlan}
+                hasAnyData={activeRecords.length > 0}
                 onSelectMetric={setDrilldownMetric}
               />
 
-              {/* Anti-Clutter 2-Metric Preview Cards Grid (max 2 metrics/card, tap to drill down) */}
-              <div className="grid grid-cols-2 gap-3">
-                <button
-                  type="button"
-                  onClick={() => setDrilldownMetric('sleep_debt')}
-                  className="aether-glass group rounded-3xl p-3.5 text-left transition hover:border-indigo-400/35 active:scale-[0.98]"
-                >
-                  <div className="flex items-center justify-between">
-                    <span className="text-[10px] font-semibold uppercase tracking-wider text-indigo-300">
-                      Sleep Planner
-                    </span>
-                    <ChevronRight className="h-3.5 w-3.5 text-slate-500 group-hover:text-white" />
-                  </div>
-                  <p className="tabular-mono mt-2 text-lg font-bold text-white">
-                    {sleepPlan.recommendedBedtime}
-                  </p>
-                  <p className="text-[11px] text-slate-400">
-                    Bedtime • Debt{' '}
-                    <span className="tabular-mono text-indigo-300">
-                      {formatMinutesToHm(sleepPlan.rolling7dDebtMin)}
-                    </span>
-                  </p>
-                </button>
+              <DetailedFeatureSections
+                today={today}
+                recovery={recovery}
+                strain={strain}
+                sleepPlan={sleepPlan}
+                acwr={acwr}
+                bioAge={bioAge}
+                onSelectMetric={setDrilldownMetric}
+                onGoToVault={() => setActiveTab('devices')}
+                onGoToLog={() => setActiveTab('log')}
+              />
 
-                <button
-                  type="button"
-                  onClick={() => setDrilldownMetric('acwr')}
-                  className="aether-glass group rounded-3xl p-3.5 text-left transition hover:border-emerald-400/35 active:scale-[0.98]"
-                >
-                  <div className="flex items-center justify-between">
-                    <span className="text-[10px] font-semibold uppercase tracking-wider text-emerald-300">
-                      Cardio ACWR
-                    </span>
-                    <ChevronRight className="h-3.5 w-3.5 text-slate-500 group-hover:text-white" />
-                  </div>
-                  <p className="tabular-mono mt-2 text-lg font-bold text-white">{acwr.ratio}</p>
-                  <p className="truncate text-[11px]" style={{ color: acwr.colorHex }}>
-                    {acwr.statusLabel}
-                  </p>
-                </button>
-
-                <button
-                  type="button"
-                  onClick={() => setDrilldownMetric('rhr')}
-                  className="aether-glass group rounded-3xl p-3.5 text-left transition hover:border-cyan-400/35 active:scale-[0.98]"
-                >
-                  <div className="flex items-center justify-between">
-                    <span className="text-[10px] font-semibold uppercase tracking-wider text-cyan-300">
-                      Resting HR
-                    </span>
-                    <ChevronRight className="h-3.5 w-3.5 text-slate-500 group-hover:text-white" />
-                  </div>
-                  <p className="tabular-mono mt-2 text-lg font-bold text-white">
-                    {today.restingHrBpm}{' '}
-                    <span className="text-xs font-normal text-slate-400">bpm</span>
-                  </p>
-                  <p className="tabular-mono text-[11px] text-slate-400">
-                    {recovery.rhrDeltaBpm >= 0 ? '+' : ''}
-                    {recovery.rhrDeltaBpm} vs {recovery.rhrBaseline30d} avg
-                  </p>
-                </button>
-
-                <button
-                  type="button"
-                  onClick={() => setDrilldownMetric('bio_age')}
-                  className="aether-glass group rounded-3xl p-3.5 text-left transition hover:border-emerald-400/35 active:scale-[0.98]"
-                >
-                  <div className="flex items-center justify-between">
-                    <span className="text-[10px] font-semibold uppercase tracking-wider text-slate-400">
-                      Bio Age
-                    </span>
-                    <ChevronRight className="h-3.5 w-3.5 text-slate-500 group-hover:text-white" />
-                  </div>
-                  <p className="tabular-mono mt-2 text-lg font-bold text-white">
-                    {bioAge.biologicalAge}{' '}
-                    <span className="text-xs font-normal text-slate-400">yrs</span>
-                  </p>
-                  <p className="tabular-mono text-[11px] text-emerald-300">
-                    Pace {bioAge.healthspanPace}x ({bioAge.deltaYears >= 0 ? '+' : ''}
-                    {bioAge.deltaYears}y)
-                  </p>
-                </button>
-              </div>
-
-              {/* Aether AI Morning Briefing & Interactive Coach */}
               <AICoachDrawer
                 briefing={briefing}
                 isRefreshingBriefing={isRefreshingBriefing}
@@ -559,29 +500,34 @@ export default function App() {
                 hasGeminiKey={Boolean(state.profile.geminiApiKey.trim())}
               />
 
-              {/* Chronological Feed */}
               <TimelineFeed
                 today={today}
                 habitDefinitions={state.habitDefinitions}
+                dailyWaterGoalMl={state.profile.dailyWaterGoalMl}
                 onDeleteWorkout={(id) =>
-                  mutateToday((rec) => ({
+                  mutateTodayReal((rec) => ({
                     ...rec,
                     workouts: rec.workouts.filter((w) => w.id !== id),
                   }))
                 }
                 onDeleteMeal={(id) =>
-                  mutateToday((rec) => ({
+                  mutateTodayReal((rec) => ({
                     ...rec,
                     meals: rec.meals.filter((m) => m.id !== id),
                   }))
                 }
+                onGoToLog={() => setActiveTab('log')}
               />
             </>
           )}
 
           {activeTab === 'biology' && (
-            <div className="space-y-6">
-              <ScrubbableCharts records={state.records} profile={state.profile} />
+            <div className="space-y-5">
+              <ScrubbableCharts
+                records={activeRecords}
+                profile={state.profile}
+                onGoToVault={() => setActiveTab('devices')}
+              />
               <HabitCorrelations correlations={correlations} />
             </div>
           )}
@@ -591,25 +537,66 @@ export default function App() {
               today={today}
               profile={state.profile}
               habitDefinitions={state.habitDefinitions}
-              onToggleHabit={handleToggleHabit}
-              onAddCustomHabit={handleAddCustomHabit}
-              onLogWorkout={handleLogWorkout}
-              onLogMeal={handleLogMeal}
-              onAddWater={handleAddWater}
-              onAddCaffeine={handleAddCaffeine}
+              onToggleHabit={(habitId) =>
+                mutateTodayReal((rec) => ({
+                  ...rec,
+                  habitsLogged: rec.habitsLogged.includes(habitId)
+                    ? rec.habitsLogged.filter((id) => id !== habitId)
+                    : [...rec.habitsLogged, habitId],
+                }))
+              }
+              onAddCustomHabit={(label, category) => {
+                const id = `custom_${Date.now()}`;
+                setState((prev) => ({
+                  ...prev,
+                  habitDefinitions: [
+                    ...prev.habitDefinitions,
+                    { id, label, category, icon: 'Sparkles', expectedDirection: 'neutral' },
+                  ],
+                }));
+                mutateTodayReal((rec) => ({ ...rec, habitsLogged: [...rec.habitsLogged, id] }));
+              }}
+              onLogWorkout={(workout) =>
+                mutateTodayReal((rec) => ({
+                  ...rec,
+                  workouts: [workout, ...rec.workouts],
+                  activeCaloriesKcal: rec.activeCaloriesKcal + workout.activeCaloriesKcal,
+                }))
+              }
+              onLogMeal={(meal) =>
+                mutateTodayReal((rec) => ({
+                  ...rec,
+                  meals: [meal, ...rec.meals],
+                }))
+              }
+              onAddWater={(ml) =>
+                mutateTodayReal((rec) => ({
+                  ...rec,
+                  hydration: { ...rec.hydration, waterMl: rec.hydration.waterMl + ml },
+                }))
+              }
+              onAddCaffeine={(mg) =>
+                mutateTodayReal((rec) => ({
+                  ...rec,
+                  hydration: {
+                    ...rec.hydration,
+                    caffeineMg: rec.hydration.caffeineMg + mg,
+                    lastCaffeineIso: new Date().toISOString(),
+                  },
+                }))
+              }
+              onSaveManualVitals={handleSaveManualVitals}
             />
           )}
 
           {activeTab === 'devices' && (
-            <div className="space-y-6">
+            <div className="space-y-5">
               <DeviceSyncWizard
                 device={state.device}
                 profile={state.profile}
                 demoSimulatorEnabled={state.demoSimulatorEnabled}
                 isSyncing={isSyncing}
                 syncStatusMessage={syncMessage}
-                canInstallPwa={Boolean(deferredInstallPrompt)}
-                onTriggerPwaInstall={handleTriggerPwaInstall}
                 onSelectWearable={handleSelectWearable}
                 onSyncHealthConnect={handleSyncHealthConnect}
                 onToggleDemoSimulator={(enabled) =>
@@ -617,20 +604,20 @@ export default function App() {
                 }
                 onUpdateBleTelemetry={handleBleTelemetry}
                 onImportRows={handleImportRows}
+                onExportBackup={handleExportBackup}
                 onUpdateProfile={(patch: Partial<UserProfile>) =>
-                  setState((prev) => ({
-                    ...prev,
-                    profile: { ...prev.profile, ...patch },
-                  }))
+                  setState((prev) => ({ ...prev, profile: { ...prev.profile, ...patch } }))
                 }
                 onResetAllData={() => {
                   clearAetherState();
-                  setState(createInitialState());
+                  setState(createCleanInitialState());
+                  setSyncMessage('All local data cleared.');
                 }}
               />
 
               <LabVault
-                biomarkers={state.labBiomarkers}
+                biomarkers={activeBiomarkers}
+                isDemoMode={state.demoSimulatorEnabled}
                 onAddBiomarker={(marker: LabBiomarker) =>
                   setState((prev) => ({
                     ...prev,
@@ -649,7 +636,7 @@ export default function App() {
         </main>
       </div>
 
-      {/* Strict 4-Tab Floating Glass Bottom Navigation Bar */}
+      {/* Strict 4-Tab Floating Glass Bottom Bar */}
       <nav
         aria-label="Primary Navigation"
         className="fixed bottom-4 left-1/2 z-40 w-[calc(100%-2rem)] max-w-[408px] -translate-x-1/2"
@@ -674,8 +661,8 @@ export default function App() {
                 className={`flex flex-col items-center justify-center gap-0.5 rounded-full py-2 transition active:scale-95 ${
                   active
                     ? isLog
-                      ? 'bg-emerald-500 text-obsidian font-bold'
-                      : 'bg-white/10 text-white font-semibold'
+                      ? 'bg-emerald-500 font-bold text-obsidian'
+                      : 'bg-white/10 font-semibold text-white'
                     : 'text-slate-400 hover:text-slate-200'
                 }`}
               >
@@ -687,7 +674,6 @@ export default function App() {
         </div>
       </nav>
 
-      {/* Tap-Any-Card Drill-Down Bottom Sheet */}
       <MetricDrilldownSheet
         metric={drilldownMetric}
         onClose={() => setDrilldownMetric(null)}

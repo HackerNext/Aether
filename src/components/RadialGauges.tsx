@@ -1,5 +1,5 @@
 import React from 'react';
-import { ShieldCheck } from 'lucide-react';
+import { ShieldCheck, Info } from 'lucide-react';
 import {
   DrilldownMetricType,
   RecoveryBreakdown,
@@ -11,6 +11,7 @@ interface RadialGaugesProps {
   recovery: RecoveryBreakdown;
   strain: StrainBreakdown;
   sleepPlan: SleepDebtPlan;
+  hasAnyData: boolean;
   onSelectMetric: (metric: DrilldownMetricType) => void;
 }
 
@@ -18,9 +19,10 @@ interface SingleGaugeProps {
   label: string;
   valueText: string;
   subText: string;
-  progress: number; // 0..1
+  progress: number;
   colorHex: string;
   glowRgba: string;
+  dimmed?: boolean;
   onClick: () => void;
 }
 
@@ -31,13 +33,14 @@ const SingleTelemetryRing: React.FC<SingleGaugeProps> = ({
   progress,
   colorHex,
   glowRgba,
+  dimmed,
   onClick,
 }) => {
-  const size = 104;
-  const strokeWidth = 7;
+  const size = 108;
+  const strokeWidth = 7.5;
   const radius = (size - strokeWidth * 2) / 2;
   const circumference = 2 * Math.PI * radius;
-  const clamped = Math.max(0.03, Math.min(1, progress));
+  const clamped = dimmed ? 0 : Math.max(0.03, Math.min(1, progress));
   const dashOffset = circumference * (1 - clamped);
 
   return (
@@ -45,7 +48,7 @@ const SingleTelemetryRing: React.FC<SingleGaugeProps> = ({
       type="button"
       onClick={onClick}
       className="group flex flex-col items-center rounded-2xl p-2 transition-all active:scale-[0.97] hover:bg-white/[0.03] focus:outline-none"
-      aria-label={`Inspect ${label} details`}
+      aria-label={`Inspect ${label}`}
     >
       <div className="relative flex items-center justify-center">
         <svg
@@ -53,31 +56,33 @@ const SingleTelemetryRing: React.FC<SingleGaugeProps> = ({
           height={size}
           viewBox={`0 0 ${size} ${size}`}
           className="-rotate-90 overflow-visible"
-          style={{ filter: `drop-shadow(0 0 12px ${glowRgba})` }}
+          style={dimmed ? undefined : { filter: `drop-shadow(0 0 12px ${glowRgba})` }}
         >
           <circle
             cx={size / 2}
             cy={size / 2}
             r={radius}
             fill="none"
-            stroke="rgba(255,255,255,0.07)"
+            stroke="rgba(255,255,255,0.08)"
             strokeWidth={strokeWidth}
           />
-          <circle
-            cx={size / 2}
-            cy={size / 2}
-            r={radius}
-            fill="none"
-            stroke={colorHex}
-            strokeWidth={strokeWidth}
-            strokeLinecap="round"
-            strokeDasharray={circumference}
-            strokeDashoffset={dashOffset}
-            className="transition-all duration-700 ease-out"
-          />
+          {!dimmed && (
+            <circle
+              cx={size / 2}
+              cy={size / 2}
+              r={radius}
+              fill="none"
+              stroke={colorHex}
+              strokeWidth={strokeWidth}
+              strokeLinecap="round"
+              strokeDasharray={circumference}
+              strokeDashoffset={dashOffset}
+              className="transition-all duration-700 ease-out"
+            />
+          )}
         </svg>
         <div className="absolute inset-0 flex flex-col items-center justify-center">
-          <span className="tabular-mono text-xl font-bold tracking-tight text-slate-50">
+          <span className={`tabular-mono text-xl font-bold tracking-tight ${dimmed ? 'text-slate-500' : 'text-slate-50'}`}>
             {valueText}
           </span>
           <span className="mt-0.5 text-[10px] font-medium uppercase tracking-wider text-slate-400">
@@ -85,7 +90,7 @@ const SingleTelemetryRing: React.FC<SingleGaugeProps> = ({
           </span>
         </div>
       </div>
-      <span className="mt-2 text-xs font-medium text-slate-300 group-hover:text-white">
+      <span className="mt-2 text-xs font-semibold text-slate-200 group-hover:text-white">
         {label}
       </span>
     </button>
@@ -96,6 +101,7 @@ export const RadialGauges: React.FC<RadialGaugesProps> = ({
   recovery,
   strain,
   sleepPlan,
+  hasAnyData,
   onSelectMetric,
 }) => {
   const recoveryGlow =
@@ -107,16 +113,23 @@ export const RadialGauges: React.FC<RadialGaugesProps> = ({
 
   return (
     <section className="aether-glass rounded-3xl p-4 shadow-glass">
-      <div className="mb-3 flex items-center justify-between px-1">
-        <span className="text-[11px] font-semibold uppercase tracking-[0.14em] text-slate-400">
-          Daily Telemetry
-        </span>
+      <div className="mb-3 flex items-center justify-between gap-2 px-1">
+        <div>
+          <h2 className="text-xs font-semibold uppercase tracking-[0.14em] text-slate-300">
+            Daily Telemetry Rings
+          </h2>
+          <p className="text-[11px] text-slate-500">Tap any ring for granular breakdown</p>
+        </div>
         <button
           type="button"
           onClick={() => onSelectMetric('recovery')}
-          className="inline-flex items-center gap-1.5 rounded-full border border-white/10 bg-white/[0.04] px-2.5 py-1 text-[10px] font-medium text-slate-300 transition hover:border-emerald-400/40 hover:text-emerald-300"
+          className="inline-flex items-center gap-1.5 rounded-full border border-white/10 bg-white/[0.04] px-2.5 py-1 text-[10px] font-medium text-slate-300 transition hover:border-emerald-400/40"
         >
-          <ShieldCheck className="h-3 w-3 text-emerald-400" />
+          {recovery.score !== null ? (
+            <ShieldCheck className="h-3 w-3 text-emerald-400" />
+          ) : (
+            <Info className="h-3 w-3 text-slate-400" />
+          )}
           <span>{recovery.badgeLabel}</span>
         </button>
       </div>
@@ -124,29 +137,32 @@ export const RadialGauges: React.FC<RadialGaugesProps> = ({
       <div className="grid grid-cols-3 gap-1">
         <SingleTelemetryRing
           label="Recovery"
-          valueText={`${recovery.score}%`}
-          subText={recovery.state}
-          progress={recovery.score / 100}
+          valueText={recovery.score !== null ? `${recovery.score}%` : '--'}
+          subText={recovery.score !== null ? recovery.state : 'no data'}
+          progress={(recovery.score ?? 0) / 100}
           colorHex={recovery.colorHex}
           glowRgba={recoveryGlow}
+          dimmed={recovery.score === null}
           onClick={() => onSelectMetric('recovery')}
         />
         <SingleTelemetryRing
           label="Strain"
-          valueText={strain.score.toFixed(1)}
-          subText="of 21.0"
+          valueText={hasAnyData ? strain.score.toFixed(1) : '--'}
+          subText={hasAnyData ? 'of 21.0' : 'no data'}
           progress={strain.score / 21}
           colorHex="#06B6D4"
           glowRgba="rgba(6, 182, 212, 0.34)"
+          dimmed={!hasAnyData || strain.score === 0}
           onClick={() => onSelectMetric('strain')}
         />
         <SingleTelemetryRing
           label="Sleep"
-          valueText={`${sleepPlan.sleepPerformancePct}%`}
-          subText="perf"
-          progress={sleepPlan.sleepPerformancePct / 100}
+          valueText={sleepPlan.sleepPerformancePct !== null ? `${sleepPlan.sleepPerformancePct}%` : '--'}
+          subText={sleepPlan.sleepPerformancePct !== null ? 'perf' : 'no data'}
+          progress={(sleepPlan.sleepPerformancePct ?? 0) / 100}
           colorHex="#818CF8"
           glowRgba="rgba(129, 140, 248, 0.34)"
+          dimmed={sleepPlan.sleepPerformancePct === null}
           onClick={() => onSelectMetric('sleep')}
         />
       </div>

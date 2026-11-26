@@ -8,7 +8,6 @@ import {
   RecoveryBreakdown,
   SleepDebtPlan,
   StrainBreakdown,
-  StrengthExerciseSet,
   UserProfile,
 } from '../types/health';
 
@@ -26,11 +25,37 @@ const stdDev = (nums: number[]): number => {
   return Math.sqrt(variance);
 };
 
-/**
- * Computes muscular load points for a single strength exercise entry.
- * Scales bodyweight sets relative to user body weight so calisthenics & gym lifts
- * both contribute accurately to the 0-21 Daily Strain ring.
- */
+export function getTodayDateStr(): string {
+  const d = new Date();
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, '0');
+  const day = String(d.getDate()).padStart(2, '0');
+  return `${y}-${m}-${day}`;
+}
+
+export function createEmptyDailyRecord(
+  date: string = getTodayDateStr(),
+  origin: DailyBiometricRecord['dataOrigin'] = 'manual'
+): DailyBiometricRecord {
+  return {
+    date,
+    restingHrBpm: null,
+    overnightHrvMs: null,
+    spo2Pct: null,
+    steps: 0,
+    activeCaloriesKcal: 0,
+    vo2MaxEstimate: null,
+    sleep: null,
+    daytimeHrZones: { zone1: 0, zone2: 0, zone3: 0, zone4: 0, zone5: 0 },
+    workouts: [],
+    meals: [],
+    hydration: { waterMl: 0, caffeineMg: 0 },
+    habitsLogged: [],
+    hourlySeries: [],
+    dataOrigin: origin,
+  };
+}
+
 export function computeMuscularLoadPoints(
   sets: number,
   reps: number,
@@ -41,23 +66,13 @@ export function computeMuscularLoadPoints(
 ): number {
   const effectiveLoad = isBodyweight ? userBodyWeightKg * 0.58 : Math.max(4, loadKg);
   const volumeKg = sets * reps * effectiveLoad;
-  // RPE 6 -> 0.72x, RPE 8 -> 1.0x, RPE 10 -> 1.38x
   const rpeMultiplier = 0.45 + Math.pow(clamp(rpe, 1, 10) / 8, 1.55) * 0.55;
   return Number(((volumeKg / 120) * rpeMultiplier).toFixed(1));
 }
 
-/**
- * Aggregates HR zone minutes from passive daytime tracking + logged workouts.
- */
-export function aggregateDailyHrZones(record: DailyBiometricRecord): HeartRateZonesMinutes {
-  const totals: HeartRateZonesMinutes = {
-    zone1: record.daytimeHrZones.zone1,
-    zone2: record.daytimeHrZones.zone2,
-    zone3: record.daytimeHrZones.zone3,
-    zone4: record.daytimeHrZones.zone4,
-    zone5: record.daytimeHrZones.zone5,
-  };
-
+export function aggregateDailyHrZones(record: DailyBiometricRecord | null): HeartRateZonesMinutes {
+  if (!record) return { zone1: 0, zone2: 0, zone3: 0, zone4: 0, zone5: 0 };
+  const totals: HeartRateZonesMinutes = { ...record.daytimeHrZones };
   for (const w of record.workouts) {
     totals.zone1 += w.hrZones.zone1;
     totals.zone2 += w.hrZones.zone2;
@@ -65,22 +80,26 @@ export function aggregateDailyHrZones(record: DailyBiometricRecord): HeartRateZo
     totals.zone4 += w.hrZones.zone4;
     totals.zone5 += w.hrZones.zone5;
   }
-
   return totals;
 }
 
-/**
- * Daily Strain Score on WHOOP-style 0-21 Logarithmic Scale.
- * Early movement builds easily (0-10); 14-17 is high training load; 18+ requires extreme endurance.
- * Integrates both HR Zones 1-5 cardiovascular load AND muscular strength load.
- */
 export function computeDailyStrain(
-  record: DailyBiometricRecord,
-  recoveryScore?: number
+  record: DailyBiometricRecord | null,
+  recoveryScore?: number | null
 ): StrainBreakdown {
-  const zones = aggregateDailyHrZones(record);
+  if (!record) {
+    return {
+      score: 0,
+      cardioLoadUnits: 0,
+      muscularLoadUnits: 0,
+      muscularStrainBoost: 0,
+      zoneMinutes: { zone1: 0, zone2: 0, zone3: 0, zone4: 0, zone5: 0 },
+      targetRange: [10.0, 14.0],
+      label: 'No Activity Yet',
+    };
+  }
 
-  // Exponential zone weighting per minute (Zone 1=50-60% ... Zone 5=90-100% Max HR)
+  const zones = aggregateDailyHrZones(record);
   const cardioLoadUnits =
     zones.zone1 * 0.65 +
     zones.zone2 * 1.45 +
@@ -90,20 +109,16 @@ export function computeDailyStrain(
     record.steps * 0.0022;
 
   const muscularLoadUnits = record.workouts.reduce((sum, w) => sum + w.muscularLoadPoints, 0);
+  const totalLoad = cardioLoadUnits + muscularLoadUnits * 1.35;
 
-  // Convert muscular load units into equivalent cardiovascular load units
-  const muscularEquivalentCardio = muscularLoadUnits * 1.35;
-  const totalLoad = cardioLoadUnits + muscularEquivalentCardio;
-
-  // Logarithmic compression curve calibrated to [0, 21]
-  // At totalLoad = 80 -> ~9.3, totalLoad = 220 -> ~14.2, totalLoad = 450 -> ~17.6, totalLoad = 850 -> ~19.8
-  const cardioOnlyScore = 21 * (1 - Math.exp(-Math.log1p(cardioLoadUnits / 28) * 0.56));
-  const combinedScore = 21 * (1 - Math.exp(-Math.log1p(totalLoad / 28) * 0.56));
+  const cardioOnlyScore =
+    cardioLoadUnits > 0 ? 21 * (1 - Math.exp(-Math.log1p(cardioLoadUnits / 28) * 0.56)) : 0;
+  const combinedScore =
+    totalLoad > 0 ? 21 * (1 - Math.exp(-Math.log1p(totalLoad / 28) * 0.56)) : 0;
 
   const score = Number(clamp(combinedScore, 0, 21).toFixed(1));
   const muscularStrainBoost = Number(Math.max(0, combinedScore - cardioOnlyScore).toFixed(1));
 
-  // Recommended strain target corridor based on morning recovery
   let targetRange: [number, number] = [10.0, 14.0];
   if (typeof recoveryScore === 'number') {
     if (recoveryScore >= 67) targetRange = [14.0, 18.0];
@@ -111,10 +126,11 @@ export function computeDailyStrain(
     else targetRange = [4.0, 8.5];
   }
 
-  let label = 'Light Recovery';
+  let label = 'Rest / Baseline';
   if (score >= 18) label = 'All-Out Peak';
   else if (score >= 14) label = 'Strenuous';
   else if (score >= 10) label = 'Moderate Build';
+  else if (score > 0.5) label = 'Light Recovery';
 
   return {
     score,
@@ -127,9 +143,6 @@ export function computeDailyStrain(
   };
 }
 
-/**
- * Calculates single workout's strain contribution for timeline display.
- */
 export function computeWorkoutStrainContribution(
   hrZones: HeartRateZonesMinutes,
   muscularLoadPoints: number
@@ -141,25 +154,24 @@ export function computeWorkoutStrainContribution(
     hrZones.zone4 * 6.4 +
     hrZones.zone5 * 11.8 +
     muscularLoadPoints * 1.35;
+  if (load <= 0) return 0.5;
   return Number(clamp(21 * (1 - Math.exp(-Math.log1p(load / 28) * 0.52)), 0.5, 20.5).toFixed(1));
 }
 
-/**
- * Computes Sleep Performance % (0-100) relative to sleep need (8h baseline + strain bonus).
- */
 export function computeSleepPerformancePct(
-  record: DailyBiometricRecord,
+  record: DailyBiometricRecord | null,
   priorDayStrain: number
-): number {
-  const baselineNeedMin = 480; // 8h
+): number | null {
+  if (!record || !record.sleep || record.sleep.totalSleepMin <= 0) return null;
+  const baselineNeedMin = 480;
   const strainBonusMin = Math.round(clamp((priorDayStrain - 8) * 4.5, 0, 55));
   const targetSleepMin = baselineNeedMin + strainBonusMin;
 
   const durationRatio = clamp(record.sleep.totalSleepMin / targetSleepMin, 0, 1.08);
-  const restorativeRatio =
-    (record.sleep.stages.deepMin + record.sleep.stages.remMin) /
-    Math.max(1, record.sleep.totalSleepMin);
-  // Optimal restorative sleep (Deep + REM) is ~42-48% of total sleep
+  const hasStages = record.sleep.stages.deepMin + record.sleep.stages.remMin > 0;
+  const restorativeRatio = hasStages
+    ? (record.sleep.stages.deepMin + record.sleep.stages.remMin) / Math.max(1, record.sleep.totalSleepMin)
+    : 0.38;
   const restorativeScore = clamp((restorativeRatio / 0.44) * 100, 30, 105);
   const efficiencyScore = clamp((record.sleep.efficiencyPct / 92) * 100, 35, 102);
 
@@ -167,128 +179,171 @@ export function computeSleepPerformancePct(
   return Math.round(clamp(weighted, 15, 100));
 }
 
-/**
- * Adaptive Recovery Score (0-100%) with Dual-Mode Formula:
- * - Native Mode (wearable exports overnight RMSSD HRV):
- *     50% HRV deviation from 30d rolling baseline
- *   + 30% RHR deviation from 30d rolling baseline
- *   + 20% Sleep Performance
- * - Proxy Mode (Redmi Watch 5 Lite / wearables without continuous overnight HRV):
- *     55% Overnight RHR deviation from 30d rolling baseline
- *   + 30% Restorative Sleep Ratio (Deep + REM %)
- *   + 15% Sleep Efficiency
- */
 export function computeAdaptiveRecovery(
   records: DailyBiometricRecord[],
   targetIndex: number = records.length - 1
 ): RecoveryBreakdown {
+  if (records.length === 0 || targetIndex < 0 || targetIndex >= records.length) {
+    return {
+      score: null,
+      state: 'no_data',
+      mode: 'awaiting_data',
+      badgeLabel: 'Awaiting Biometrics',
+      colorHex: '#64748B',
+      rhrBaseline30d: null,
+      rhrDeltaBpm: null,
+      hrvBaseline30d: null,
+      hrvDeltaPct: null,
+      restorativeSleepPct: null,
+      sleepEfficiencyPct: null,
+      sleepPerformancePct: null,
+      components: [],
+    };
+  }
+
   const current = records[targetIndex];
-  const windowStart = Math.max(0, targetIndex - 30);
-  const baselineSlice = records.slice(windowStart, targetIndex);
-  const effectiveSlice = baselineSlice.length >= 3 ? baselineSlice : records.slice(0, targetIndex + 1);
-
-  const rhrBaseline30d = Number(mean(effectiveSlice.map((r) => r.restingHrBpm)).toFixed(1));
-  const rhrDeltaBpm = Number((current.restingHrBpm - rhrBaseline30d).toFixed(1));
-
   const priorStrain =
-    targetIndex > 0 ? computeDailyStrain(records[targetIndex - 1]).score : 11.2;
+    targetIndex > 0 ? computeDailyStrain(records[targetIndex - 1]).score : 8.0;
   const sleepPerformancePct = computeSleepPerformancePct(current, priorStrain);
 
-  const restorativeSleepPct = Number(
-    (
-      ((current.sleep.stages.deepMin + current.sleep.stages.remMin) /
-        Math.max(1, current.sleep.totalSleepMin)) *
-      100
-    ).toFixed(1)
-  );
-  const sleepEfficiencyPct = Number(current.sleep.efficiencyPct.toFixed(1));
-
-  // RHR normalized score: lower RHR than 30d baseline boosts recovery; higher RHR reduces it
-  // Baseline delta 0 bpm -> 74 pts; -4 bpm -> ~94 pts; +5 bpm -> ~44 pts
-  const rhrNormalized = clamp(74 - rhrDeltaBpm * 6.2, 8, 100);
-
+  const hasRhr = current.restingHrBpm !== null && current.restingHrBpm > 0;
+  const hasSleep = current.sleep !== null && current.sleep.totalSleepMin > 0;
   const hasOvernightHrv = current.overnightHrvMs !== null && current.overnightHrvMs > 0;
-  const hrvSamples = effectiveSlice
-    .map((r) => r.overnightHrvMs)
+
+  if (!hasRhr && !hasSleep && !hasOvernightHrv) {
+    return {
+      score: null,
+      state: 'no_data',
+      mode: 'awaiting_data',
+      badgeLabel: 'Awaiting Sync or Log',
+      colorHex: '#64748B',
+      rhrBaseline30d: null,
+      rhrDeltaBpm: null,
+      hrvBaseline30d: null,
+      hrvDeltaPct: null,
+      restorativeSleepPct: null,
+      sleepEfficiencyPct: null,
+      sleepPerformancePct: null,
+      components: [],
+    };
+  }
+
+  const windowStart = Math.max(0, targetIndex - 30);
+  const baselineSlice = records.slice(windowStart, targetIndex);
+  const effectiveSlice = baselineSlice.length >= 2 ? baselineSlice : records.slice(0, targetIndex + 1);
+
+  const rhrValues = effectiveSlice
+    .map((r) => r.restingHrBpm)
     .filter((v): v is number => v !== null && v > 0);
+  const rhrBaseline30d =
+    rhrValues.length > 0 ? Number(mean(rhrValues).toFixed(1)) : current.restingHrBpm;
+  const rhrDeltaBpm =
+    hasRhr && rhrBaseline30d !== null
+      ? Number((current.restingHrBpm! - rhrBaseline30d).toFixed(1))
+      : null;
+
+  const restorativeSleepPct = hasSleep
+    ? Number(
+        (
+          ((current.sleep!.stages.deepMin + current.sleep!.stages.remMin) /
+            Math.max(1, current.sleep!.totalSleepMin)) *
+          100
+        ).toFixed(1)
+      )
+    : null;
+  const sleepEfficiencyPct = hasSleep ? Number(current.sleep!.efficiencyPct.toFixed(1)) : null;
+
+  const rhrNormalized =
+    rhrDeltaBpm !== null ? clamp(74 - rhrDeltaBpm * 6.2, 8, 100) : 70;
 
   let score = 0;
   let mode: RecoveryBreakdown['mode'] = 'rhr_sleep_proxy';
   let badgeLabel = 'RHR + Sleep Calibrated';
   let hrvBaseline30d: number | null = null;
   let hrvDeltaPct: number | null = null;
-  let components: RecoveryBreakdown['components'] = [];
+  const components: RecoveryBreakdown['components'] = [];
 
-  if (hasOvernightHrv && current.overnightHrvMs !== null) {
+  if (hasOvernightHrv) {
     mode = 'hrv_native';
     badgeLabel = 'HRV + RHR Native';
+    const hrvValues = effectiveSlice
+      .map((r) => r.overnightHrvMs)
+      .filter((v): v is number => v !== null && v > 0);
     hrvBaseline30d = Number(
-      (hrvSamples.length > 0 ? mean(hrvSamples) : current.overnightHrvMs).toFixed(1)
+      (hrvValues.length > 0 ? mean(hrvValues) : current.overnightHrvMs!).toFixed(1)
     );
     hrvDeltaPct = Number(
-      (((current.overnightHrvMs - hrvBaseline30d) / Math.max(1, hrvBaseline30d)) * 100).toFixed(1)
+      (((current.overnightHrvMs! - hrvBaseline30d) / Math.max(1, hrvBaseline30d)) * 100).toFixed(1)
     );
-    // HRV delta 0% -> 72 pts; +15% -> ~96 pts; -20% -> ~38 pts
     const hrvNormalized = clamp(72 + hrvDeltaPct * 1.65, 8, 100);
+    const sleepNorm = sleepPerformancePct ?? 72;
 
-    score = Math.round(
-      clamp(hrvNormalized * 0.5 + rhrNormalized * 0.3 + sleepPerformancePct * 0.2, 1, 100)
-    );
-
-    components = [
+    score = Math.round(clamp(hrvNormalized * 0.5 + rhrNormalized * 0.3 + sleepNorm * 0.2, 1, 100));
+    components.push(
       {
         label: 'Overnight RMSSD HRV',
         weightPct: 50,
         contribution: Math.round(hrvNormalized * 0.5),
-        detail: `${current.overnightHrvMs} ms (${hrvDeltaPct >= 0 ? '+' : ''}${hrvDeltaPct}% vs 30d)`,
+        detail: `${current.overnightHrvMs} ms (${hrvDeltaPct >= 0 ? '+' : ''}${hrvDeltaPct}% vs baseline)`,
       },
       {
         label: 'Resting Heart Rate',
         weightPct: 30,
         contribution: Math.round(rhrNormalized * 0.3),
-        detail: `${current.restingHrBpm} bpm (${rhrDeltaBpm >= 0 ? '+' : ''}${rhrDeltaBpm} vs ${rhrBaseline30d})`,
+        detail: hasRhr
+          ? `${current.restingHrBpm} bpm (${rhrDeltaBpm! >= 0 ? '+' : ''}${rhrDeltaBpm} vs ${rhrBaseline30d})`
+          : 'Not synced yet',
       },
       {
         label: 'Sleep Performance',
         weightPct: 20,
-        contribution: Math.round(sleepPerformancePct * 0.2),
-        detail: `${sleepPerformancePct}% of strain-adjusted need`,
-      },
-    ];
-  } else {
-    // Proxy Mode tailored for Redmi Watch 5 Lite & non-overnight-HRV wearables
-    // 55% Overnight RHR deviation + 30% Restorative Sleep Ratio + 15% Sleep Efficiency
-    const restorativeNormalized = clamp(((restorativeSleepPct - 18) / 30) * 100, 12, 100);
-    const efficiencyNormalized = clamp(((sleepEfficiencyPct - 68) / 28) * 100, 12, 100);
-
-    score = Math.round(
-      clamp(
-        rhrNormalized * 0.55 + restorativeNormalized * 0.3 + efficiencyNormalized * 0.15,
-        1,
-        100
-      )
+        contribution: Math.round(sleepNorm * 0.2),
+        detail: sleepPerformancePct !== null ? `${sleepPerformancePct}% of sleep need` : 'Not synced yet',
+      }
     );
+  } else {
+    // Proxy Mode (Redmi Watch 5 Lite / wearables without continuous overnight HRV)
+    const restorativeNormalized =
+      restorativeSleepPct !== null && restorativeSleepPct > 0
+        ? clamp(((restorativeSleepPct - 18) / 30) * 100, 12, 100)
+        : sleepPerformancePct ?? 68;
+    const efficiencyNormalized =
+      sleepEfficiencyPct !== null ? clamp(((sleepEfficiencyPct - 68) / 28) * 100, 12, 100) : 70;
 
-    components = [
+    if (hasRhr && hasSleep) {
+      score = Math.round(
+        clamp(rhrNormalized * 0.55 + restorativeNormalized * 0.3 + efficiencyNormalized * 0.15, 1, 100)
+      );
+    } else if (hasRhr) {
+      badgeLabel = 'RHR Only (Sync Sleep)';
+      score = Math.round(rhrNormalized);
+    } else {
+      badgeLabel = 'Sleep Only (Sync RHR)';
+      score = Math.round(clamp(restorativeNormalized * 0.65 + efficiencyNormalized * 0.35, 15, 100));
+    }
+
+    components.push(
       {
         label: 'Overnight RHR Baseline',
         weightPct: 55,
-        contribution: Math.round(rhrNormalized * 0.55),
-        detail: `${current.restingHrBpm} bpm (${rhrDeltaBpm >= 0 ? '+' : ''}${rhrDeltaBpm} vs ${rhrBaseline30d})`,
+        contribution: hasRhr ? Math.round(rhrNormalized * 0.55) : 0,
+        detail: hasRhr
+          ? `${current.restingHrBpm} bpm (${rhrDeltaBpm! >= 0 ? '+' : ''}${rhrDeltaBpm} vs ${rhrBaseline30d})`
+          : 'Awaiting RHR record',
       },
       {
         label: 'Restorative Sleep (Deep+REM)',
         weightPct: 30,
-        contribution: Math.round(restorativeNormalized * 0.3),
-        detail: `${restorativeSleepPct}% of total sleep`,
+        contribution: hasSleep ? Math.round(restorativeNormalized * 0.3) : 0,
+        detail: hasSleep ? `${restorativeSleepPct}% of total sleep` : 'Awaiting sleep session',
       },
       {
         label: 'Sleep Efficiency',
         weightPct: 15,
-        contribution: Math.round(efficiencyNormalized * 0.15),
-        detail: `${sleepEfficiencyPct}% asleep in bed`,
-      },
-    ];
+        contribution: hasSleep ? Math.round(efficiencyNormalized * 0.15) : 0,
+        detail: hasSleep ? `${sleepEfficiencyPct}% asleep in bed` : 'Awaiting sleep session',
+      }
+    );
   }
 
   let state: RecoveryBreakdown['state'] = 'moderate';
@@ -318,51 +373,41 @@ export function computeAdaptiveRecovery(
   };
 }
 
-/**
- * Rolling 7-day Sleep Debt & Smart Bedtime Planner.
- * Formula: Baseline Need (8h) + Daily Strain Adjustment - Actual Sleep.
- */
 export function computeSleepDebtPlan(
   records: DailyBiometricRecord[],
   targetWakeTime: string
 ): SleepDebtPlan {
-  const baselineNeedMin = 480; // 8 hours
-  const last7 = records.slice(-7);
-  let cumulativeDebtMin = 0;
-
-  last7.forEach((rec, idx) => {
-    const prevStrain =
-      idx > 0 ? computeDailyStrain(last7[idx - 1]).score : computeDailyStrain(rec).score;
-    const strainAdj = Math.round(clamp((prevStrain - 9) * 4.5, 0, 50));
-    const dailyNeed = baselineNeedMin + strainAdj;
-    cumulativeDebtMin += dailyNeed - rec.sleep.totalSleepMin;
-  });
-
-  const rolling7dDebtMin = Math.round(clamp(cumulativeDebtMin, 0, 420));
-  const today = records[records.length - 1];
+  const baselineNeedMin = 480;
+  const last7WithSleep = records.slice(-7).filter((r) => r.sleep && r.sleep.totalSleepMin > 0);
+  const today = records.length > 0 ? records[records.length - 1] : null;
   const todayStrain = computeDailyStrain(today).score;
   const todayStrainAdjustmentMin = Math.round(clamp((todayStrain - 8.5) * 4.8, 0, 58));
 
-  // Recommend paying back up to 35% of accumulated 7d sleep debt tonight (capped at +60m)
+  let cumulativeDebtMin = 0;
+  last7WithSleep.forEach((rec, idx) => {
+    const prevStrain =
+      idx > 0 ? computeDailyStrain(last7WithSleep[idx - 1]).score : computeDailyStrain(rec).score;
+    const strainAdj = Math.round(clamp((prevStrain - 9) * 4.5, 0, 50));
+    cumulativeDebtMin += baselineNeedMin + strainAdj - rec.sleep!.totalSleepMin;
+  });
+
+  const rolling7dDebtMin = Math.round(clamp(cumulativeDebtMin, 0, 420));
   const debtPaybackMin = Math.min(60, Math.round(rolling7dDebtMin * 0.35));
   const recommendedDurationMin = baselineNeedMin + todayStrainAdjustmentMin + debtPaybackMin;
 
-  // Convert targetWakeTime ("06:45") minus recommendedDurationMin + 15m sleep latency
   const [wakeH, wakeM] = targetWakeTime.split(':').map(Number);
   const wakeTotalMin = (isNaN(wakeH) ? 6 : wakeH) * 60 + (isNaN(wakeM) ? 45 : wakeM);
   let bedTotalMin = wakeTotalMin - (recommendedDurationMin + 15);
   while (bedTotalMin < 0) bedTotalMin += 1440;
   bedTotalMin = bedTotalMin % 1440;
 
-  const bedH = Math.floor(bedTotalMin / 60);
-  const bedM = bedTotalMin % 60;
-  const recommendedBedtime = `${String(bedH).padStart(2, '0')}:${String(bedM).padStart(2, '0')}`;
-
+  const recommendedBedtime = `${String(Math.floor(bedTotalMin / 60)).padStart(2, '0')}:${String(bedTotalMin % 60).padStart(2, '0')}`;
   const priorStrain =
     records.length > 1 ? computeDailyStrain(records[records.length - 2]).score : todayStrain;
   const sleepPerformancePct = computeSleepPerformancePct(today, priorStrain);
 
   return {
+    hasSleepData: last7WithSleep.length > 0,
     rolling7dDebtMin,
     baselineNeedMin,
     todayStrainAdjustmentMin,
@@ -373,103 +418,105 @@ export function computeSleepDebtPlan(
   };
 }
 
-/**
- * Cardio Load & Acute-to-Chronic Workload Ratio (ACWR):
- * 7-day Acute Strain avg vs 28-day Chronic Strain avg.
- */
 export function computeCardioLoadAcwr(
   records: DailyBiometricRecord[],
   endIndex: number = records.length - 1
 ): CardioLoadAcwr {
+  if (records.length === 0 || endIndex < 0) {
+    return {
+      acute7dAvg: 0,
+      chronic28dAvg: 0,
+      ratio: null,
+      status: 'no_data',
+      statusLabel: 'Awaiting Activity',
+      colorHex: '#64748B',
+    };
+  }
+
   const slice28 = records.slice(Math.max(0, endIndex - 27), endIndex + 1);
   const slice7 = records.slice(Math.max(0, endIndex - 6), endIndex + 1);
 
   const acute7dAvg = Number(mean(slice7.map((r) => computeDailyStrain(r).score)).toFixed(2));
-  const chronic28dAvg = Number(
-    Math.max(1, mean(slice28.map((r) => computeDailyStrain(r).score))).toFixed(2)
-  );
-  const ratio = Number((acute7dAvg / chronic28dAvg).toFixed(2));
+  const chronic28dAvg = Number(mean(slice28.map((r) => computeDailyStrain(r).score)).toFixed(2));
+
+  if (chronic28dAvg < 0.2) {
+    return {
+      acute7dAvg,
+      chronic28dAvg,
+      ratio: null,
+      status: 'no_data',
+      statusLabel: 'Needs 3+ Active Days',
+      colorHex: '#64748B',
+    };
+  }
+
+  const ratio = Number((acute7dAvg / Math.max(0.5, chronic28dAvg)).toFixed(2));
 
   if (ratio < 0.8) {
-    return {
-      acute7dAvg,
-      chronic28dAvg,
-      ratio,
-      status: 'detraining',
-      statusLabel: 'Detraining',
-      colorHex: '#818CF8',
-    };
+    return { acute7dAvg, chronic28dAvg, ratio, status: 'detraining', statusLabel: 'Detraining', colorHex: '#818CF8' };
   }
   if (ratio <= 1.3) {
-    return {
-      acute7dAvg,
-      chronic28dAvg,
-      ratio,
-      status: 'optimal',
-      statusLabel: 'Optimal Sweet Spot',
-      colorHex: '#10B981',
-    };
+    return { acute7dAvg, chronic28dAvg, ratio, status: 'optimal', statusLabel: 'Optimal Sweet Spot', colorHex: '#10B981' };
   }
   if (ratio <= 1.5) {
-    return {
-      acute7dAvg,
-      chronic28dAvg,
-      ratio,
-      status: 'building',
-      statusLabel: 'Elevated Build',
-      colorHex: '#F59E0B',
-    };
+    return { acute7dAvg, chronic28dAvg, ratio, status: 'building', statusLabel: 'Elevated Build', colorHex: '#F59E0B' };
   }
-  return {
-    acute7dAvg,
-    chronic28dAvg,
-    ratio,
-    status: 'overreaching',
-    statusLabel: 'Overreaching Risk',
-    colorHex: '#F43F5E',
-  };
+  return { acute7dAvg, chronic28dAvg, ratio, status: 'overreaching', statusLabel: 'Overreaching Risk', colorHex: '#F43F5E' };
 }
 
-/**
- * Biological Age & Healthspan Pace computed over a 30/90-day rolling window
- * based on RHR trend, VO2 Max estimate, and sleep consistency.
- */
 export function computeBiologicalAge(
   records: DailyBiometricRecord[],
   profile: UserProfile,
   windowDays: number = 30
 ): BiologicalAgeMetrics {
   const slice = records.slice(-windowDays);
-  const rhr30dAvg = Number(mean(slice.map((r) => r.restingHrBpm)).toFixed(1));
-  const vo2Max30dAvg = Number(mean(slice.map((r) => r.vo2MaxEstimate)).toFixed(1));
+  const rhrValues = slice.map((r) => r.restingHrBpm).filter((v): v is number => v !== null && v > 0);
+  const vo2Values = slice.map((r) => r.vo2MaxEstimate).filter((v): v is number => v !== null && v > 0);
+  const sleepBedMinutes = slice
+    .filter((r) => r.sleep?.bedtimeIso)
+    .map((r) => {
+      const d = new Date(r.sleep!.bedtimeIso!);
+      let m = d.getHours() * 60 + d.getMinutes();
+      if (m < 720) m += 1440;
+      return m;
+    });
 
-  // Sleep consistency from bedtime minute variance
-  const bedMinutes = slice.map((r) => {
-    const d = new Date(r.sleep.bedtimeIso);
-    let m = d.getHours() * 60 + d.getMinutes();
-    if (m < 720) m += 1440; // normalize after-midnight bedtimes (e.g., 00:30 -> 24:30)
-    return m;
-  });
-  const bedSd = stdDev(bedMinutes);
-  const sleepConsistencyPct = Math.round(clamp(100 - bedSd * 0.72, 42, 99));
+  if (rhrValues.length === 0) {
+    return {
+      hasEnoughData: false,
+      chronologicalAge: profile.chronologicalAge,
+      biologicalAge: null,
+      deltaYears: null,
+      healthspanPace: null,
+      rhr30dAvg: null,
+      vo2Max30dAvg: null,
+      sleepConsistencyPct: null,
+    };
+  }
 
-  // Age-normalized VO2 Max benchmark (~42 ml/kg/min at age 28, -0.35/yr)
+  const rhr30dAvg = Number(mean(rhrValues).toFixed(1));
+  // Estimate VO2 Max via Uth-Sørensen-Overgaard-Pedersen formula (15.3 * HRmax / RHR) when wearable doesn't export VO2
+  const vo2Max30dAvg =
+    vo2Values.length > 0
+      ? Number(mean(vo2Values).toFixed(1))
+      : Number(clamp(15.3 * (profile.maxHrBpm / Math.max(40, rhr30dAvg)), 28, 72).toFixed(1));
+
+  const sleepConsistencyPct =
+    sleepBedMinutes.length >= 2
+      ? Math.round(clamp(100 - stdDev(sleepBedMinutes) * 0.72, 42, 99))
+      : null;
+
   const expectedVo2 = 51.8 - profile.chronologicalAge * 0.35;
-  const vo2DeltaYears = (expectedVo2 - vo2Max30dAvg) * 0.42;
+  const vo2DeltaYears = (expectedVo2 - vo2Max30dAvg) * 0.36;
+  const rhrDeltaYears = (rhr30dAvg - 62) * 0.22;
+  const sleepDeltaYears = sleepConsistencyPct !== null ? (80 - sleepConsistencyPct) * 0.05 : 0;
 
-  // RHR benchmark (~62 bpm neutral)
-  const rhrDeltaYears = (rhr30dAvg - 62) * 0.24;
-
-  // Sleep consistency bonus/penalty (80% neutral)
-  const sleepDeltaYears = (80 - sleepConsistencyPct) * 0.06;
-
-  const deltaYears = Number(clamp(vo2DeltaYears + rhrDeltaYears + sleepDeltaYears, -9.5, 9.5).toFixed(1));
+  const deltaYears = Number(clamp(vo2DeltaYears + rhrDeltaYears + sleepDeltaYears, -8.5, 8.5).toFixed(1));
   const biologicalAge = Number(Math.max(16, profile.chronologicalAge + deltaYears).toFixed(1));
-
-  // Healthspan Pace: 1.00x = normal aging, <1.00x = decelerated aging
-  const healthspanPace = Number(clamp(1 + deltaYears * 0.045, 0.65, 1.38).toFixed(2));
+  const healthspanPace = Number(clamp(1 + deltaYears * 0.045, 0.68, 1.35).toFixed(2));
 
   return {
+    hasEnoughData: true,
     chronologicalAge: profile.chronologicalAge,
     biologicalAge,
     deltaYears,
@@ -480,28 +527,23 @@ export function computeBiologicalAge(
   };
 }
 
-/**
- * Statistical Habit Impact Correlation Engine.
- * Compares next-day Recovery %, Deep Sleep %, and Sleep Efficiency %
- * on nights following a logged habit vs nights without it.
- */
 export function computeHabitCorrelations(
   records: DailyBiometricRecord[],
   habits: HabitDefinition[]
 ): HabitCorrelationResult[] {
   if (records.length < 5) return [];
 
-  // Precompute daily recovery & sleep metrics for days 1..N-1 (next-day outcomes)
   const dailyOutcomes = records.map((rec, idx) => {
     const recovery = computeAdaptiveRecovery(records, idx).score;
     const deepPct =
-      (rec.sleep.stages.deepMin / Math.max(1, rec.sleep.totalSleepMin)) * 100;
-    const efficiencyPct = rec.sleep.efficiencyPct;
+      rec.sleep && rec.sleep.totalSleepMin > 0
+        ? (rec.sleep.stages.deepMin / rec.sleep.totalSleepMin) * 100
+        : null;
+    const efficiencyPct = rec.sleep ? rec.sleep.efficiencyPct : null;
     return { recovery, deepPct, efficiencyPct };
   });
 
   const results: HabitCorrelationResult[] = [];
-
   for (const habit of habits) {
     const withRec: number[] = [];
     const withoutRec: number[] = [];
@@ -510,33 +552,33 @@ export function computeHabitCorrelations(
     const withEff: number[] = [];
     const withoutEff: number[] = [];
 
-    // Day i habit impacts Day i+1 morning biometrics (and same-night sleep recorded on Day i+1)
     for (let i = 0; i < records.length - 1; i++) {
       const hasHabit = records[i].habitsLogged.includes(habit.id);
-      const nextOutcome = dailyOutcomes[i + 1];
-      if (hasHabit) {
-        withRec.push(nextOutcome.recovery);
-        withDeep.push(nextOutcome.deepPct);
-        withEff.push(nextOutcome.efficiencyPct);
-      } else {
-        withoutRec.push(nextOutcome.recovery);
-        withoutDeep.push(nextOutcome.deepPct);
-        withoutEff.push(nextOutcome.efficiencyPct);
+      const next = dailyOutcomes[i + 1];
+      if (next.recovery !== null) {
+        (hasHabit ? withRec : withoutRec).push(next.recovery);
+      }
+      if (next.deepPct !== null) {
+        (hasHabit ? withDeep : withoutDeep).push(next.deepPct);
+      }
+      if (next.efficiencyPct !== null) {
+        (hasHabit ? withEff : withoutEff).push(next.efficiencyPct);
       }
     }
 
     if (withRec.length === 0 || withoutRec.length === 0) continue;
 
     const recoveryDeltaPct = Math.round(mean(withRec) - mean(withoutRec));
-    const deepSleepDeltaPct = Math.round(
-      ((mean(withDeep) - mean(withoutDeep)) / Math.max(1, mean(withoutDeep))) * 100
-    );
-    const sleepEfficiencyDeltaPct = Math.round(mean(withEff) - mean(withoutEff));
+    const deepSleepDeltaPct =
+      withDeep.length > 0 && withoutDeep.length > 0
+        ? Math.round(((mean(withDeep) - mean(withoutDeep)) / Math.max(1, mean(withoutDeep))) * 100)
+        : 0;
+    const sleepEfficiencyDeltaPct =
+      withEff.length > 0 && withoutEff.length > 0
+        ? Math.round(mean(withEff) - mean(withoutEff))
+        : 0;
 
     const minSample = Math.min(withRec.length, withoutRec.length);
-    const confidence: HabitCorrelationResult['confidence'] =
-      minSample >= 10 ? 'high' : minSample >= 5 ? 'moderate' : 'emerging';
-
     results.push({
       habitId: habit.id,
       label: habit.label,
@@ -546,7 +588,7 @@ export function computeHabitCorrelations(
       recoveryDeltaPct,
       deepSleepDeltaPct,
       sleepEfficiencyDeltaPct,
-      confidence,
+      confidence: minSample >= 10 ? 'high' : minSample >= 5 ? 'moderate' : 'emerging',
     });
   }
 

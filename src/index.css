@@ -19,20 +19,19 @@
 }
 
 .aether-glass {
-  background: rgba(16, 20, 29, 0.84);
+  background: rgba(16, 20, 29, 0.88);
   backdrop-filter: blur(20px);
   -webkit-backdrop-filter: blur(20px);
-  border: 1px solid rgba(255, 255, 255, 0.07);
+  border: 1px solid rgba(255, 255, 255, 0.08);
 }
 
 .aether-glass-elevated {
-  background: rgba(20, 26, 38, 0.92);
+  background: rgba(20, 26, 38, 0.94);
   backdrop-filter: blur(24px);
   -webkit-backdrop-filter: blur(24px);
-  border: 1px solid rgba(255, 255, 255, 0.09);
+  border: 1px solid rgba(255, 255, 255, 0.1);
 }
 
-/* Custom sleek dark scrollbar */
 ::-webkit-scrollbar {
   width: 5px;
   height: 5px;
@@ -41,23 +40,14 @@
   background: transparent;
 }
 ::-webkit-scrollbar-thumb {
-  background: rgba(255, 255, 255, 0.12);
+  background: rgba(255, 255, 255, 0.14);
   border-radius: 999px;
 }
 
 @keyframes pulseRing {
-  0% {
-    transform: scale(0.95);
-    opacity: 0.75;
-  }
-  70% {
-    transform: scale(1.35);
-    opacity: 0;
-  }
-  100% {
-    transform: scale(1.35);
-    opacity: 0;
-  }
+  0% { transform: scale(0.95); opacity: 0.75; }
+  70% { transform: scale(1.4); opacity: 0; }
+  100% { transform: scale(1.4); opacity: 0; }
 }
 
 .animate-pulse-ring {

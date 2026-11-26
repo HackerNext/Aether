@@ -23,17 +23,29 @@ export interface SensorCapabilities {
   stepsAndCalories: 'active' | 'inactive';
 }
 
+export interface HealthConnectDiagnostics {
+  sdkAvailable: boolean;
+  statusLabel: string;
+  grantedCount: number;
+  totalRequested: number;
+  lastRawRecordCount: number;
+  detectedSources: string[];
+  lastError?: string;
+}
+
 export interface ConnectedDevice {
   id: WearableBrandId;
   name: string;
   ecosystem: string;
   transport: IngestionTransport;
   connected: boolean;
-  batteryPct: number;
-  lastSyncedIso: string;
+  /** Only populated when a real BLE device reports 0x180F battery; Health Connect does not provide watch battery. */
+  batteryPct: number | null;
+  lastSyncedIso: string | null;
   capabilities: SensorCapabilities;
   liveBleBpm?: number;
   liveBleRrMs?: number;
+  healthConnect: HealthConnectDiagnostics;
 }
 
 export interface SleepStageBreakdown {
@@ -45,22 +57,22 @@ export interface SleepStageBreakdown {
 
 export interface SleepSessionRecord {
   id: string;
-  date: string; // YYYY-MM-DD (morning wake date)
-  bedtimeIso: string;
-  wakeTimeIso: string;
+  date: string;
+  bedtimeIso: string | null;
+  wakeTimeIso: string | null;
   timeInBedMin: number;
   totalSleepMin: number;
   stages: SleepStageBreakdown;
-  efficiencyPct: number; // totalSleepMin / timeInBedMin * 100
+  efficiencyPct: number;
   source: string;
 }
 
 export interface HeartRateZonesMinutes {
-  zone1: number; // 50-60% Max HR
-  zone2: number; // 60-70% Max HR
-  zone3: number; // 70-80% Max HR
-  zone4: number; // 80-90% Max HR
-  zone5: number; // 90-100% Max HR
+  zone1: number;
+  zone2: number;
+  zone3: number;
+  zone4: number;
+  zone5: number;
 }
 
 export interface StrengthExerciseSet {
@@ -68,9 +80,9 @@ export interface StrengthExerciseSet {
   exerciseName: string;
   sets: number;
   reps: number;
-  loadKg: number; // 0 when bodyweight
+  loadKg: number;
   isBodyweight: boolean;
-  rpe: number; // 1-10
+  rpe: number;
   muscularLoadPoints: number;
 }
 
@@ -118,46 +130,47 @@ export interface HabitDefinition {
 }
 
 export interface HourlyBiometricPoint {
-  hour: number; // 0..23
+  hour: number;
   label: string;
   hrBpm: number;
   strainCumulative: number;
-  stressIndex: number; // 0-100
+  stressIndex: number;
 }
 
 export interface DailyBiometricRecord {
   date: string; // YYYY-MM-DD
-  restingHrBpm: number;
-  overnightHrvMs: number | null; // null on Redmi Watch 5 Lite -> triggers Proxy Mode
-  spo2Pct: number;
+  restingHrBpm: number | null;
+  overnightHrvMs: number | null;
+  spo2Pct: number | null;
   steps: number;
   activeCaloriesKcal: number;
-  vo2MaxEstimate: number;
-  sleep: SleepSessionRecord;
+  vo2MaxEstimate: number | null;
+  sleep: SleepSessionRecord | null;
   daytimeHrZones: HeartRateZonesMinutes;
   workouts: WorkoutRecord[];
   meals: MealRecord[];
   hydration: HydrationCaffeineLog;
-  habitsLogged: string[]; // HabitDefinition ids active on this day
+  habitsLogged: string[];
   hourlySeries: HourlyBiometricPoint[];
+  dataOrigin: 'health_connect' | 'manual' | 'imported' | 'demo';
 }
 
-export type RecoveryState = 'optimal' | 'moderate' | 'low';
-export type RecoveryMode = 'hrv_native' | 'rhr_sleep_proxy';
+export type RecoveryState = 'optimal' | 'moderate' | 'low' | 'no_data';
+export type RecoveryMode = 'hrv_native' | 'rhr_sleep_proxy' | 'awaiting_data';
 
 export interface RecoveryBreakdown {
-  score: number; // 0-100
+  score: number | null;
   state: RecoveryState;
   mode: RecoveryMode;
   badgeLabel: string;
   colorHex: string;
-  rhrBaseline30d: number;
-  rhrDeltaBpm: number;
+  rhrBaseline30d: number | null;
+  rhrDeltaBpm: number | null;
   hrvBaseline30d: number | null;
   hrvDeltaPct: number | null;
-  restorativeSleepPct: number;
-  sleepEfficiencyPct: number;
-  sleepPerformancePct: number;
+  restorativeSleepPct: number | null;
+  sleepEfficiencyPct: number | null;
+  sleepPerformancePct: number | null;
   components: {
     label: string;
     weightPct: number;
@@ -167,7 +180,7 @@ export interface RecoveryBreakdown {
 }
 
 export interface StrainBreakdown {
-  score: number; // 0-21 logarithmic
+  score: number;
   cardioLoadUnits: number;
   muscularLoadUnits: number;
   muscularStrainBoost: number;
@@ -177,34 +190,36 @@ export interface StrainBreakdown {
 }
 
 export interface SleepDebtPlan {
+  hasSleepData: boolean;
   rolling7dDebtMin: number;
   baselineNeedMin: number;
   todayStrainAdjustmentMin: number;
   recommendedDurationMin: number;
-  targetWakeTime: string; // HH:MM
-  recommendedBedtime: string; // HH:MM
-  sleepPerformancePct: number;
+  targetWakeTime: string;
+  recommendedBedtime: string;
+  sleepPerformancePct: number | null;
 }
 
-export type AcwrStatus = 'detraining' | 'optimal' | 'building' | 'overreaching';
+export type AcwrStatus = 'detraining' | 'optimal' | 'building' | 'overreaching' | 'no_data';
 
 export interface CardioLoadAcwr {
   acute7dAvg: number;
   chronic28dAvg: number;
-  ratio: number;
+  ratio: number | null;
   status: AcwrStatus;
   statusLabel: string;
   colorHex: string;
 }
 
 export interface BiologicalAgeMetrics {
+  hasEnoughData: boolean;
   chronologicalAge: number;
-  biologicalAge: number;
-  deltaYears: number; // negative = younger than chronological age
-  healthspanPace: number; // e.g., 0.84x
-  rhr30dAvg: number;
-  vo2Max30dAvg: number;
-  sleepConsistencyPct: number;
+  biologicalAge: number | null;
+  deltaYears: number | null;
+  healthspanPace: number | null;
+  rhr30dAvg: number | null;
+  vo2Max30dAvg: number | null;
+  sleepConsistencyPct: number | null;
 }
 
 export interface HabitCorrelationResult {
@@ -213,8 +228,8 @@ export interface HabitCorrelationResult {
   category: HabitDefinition['category'];
   sampleDaysWith: number;
   sampleDaysWithout: number;
-  recoveryDeltaPct: number; // e.g., +8 or -9
-  deepSleepDeltaPct: number; // e.g., +12 or -6
+  recoveryDeltaPct: number;
+  deepSleepDeltaPct: number;
   sleepEfficiencyDeltaPct: number;
   confidence: 'high' | 'moderate' | 'emerging';
 }
@@ -238,7 +253,7 @@ export interface UserProfile {
   chronologicalAge: number;
   maxHrBpm: number;
   bodyWeightKg: number;
-  targetWakeTime: string; // "06:45"
+  targetWakeTime: string;
   dailyWaterGoalMl: number;
   dailyCalorieGoal: number;
   geminiApiKey: string;
@@ -262,9 +277,12 @@ export interface CoachMessage {
 export interface AetherAppState {
   profile: UserProfile;
   device: ConnectedDevice;
+  /** Always false by default so zero boilerplate data appears unless the user opts into Preview Demo Mode. */
   demoSimulatorEnabled: boolean;
-  records: DailyBiometricRecord[]; // chronologically ascending (oldest -> today)
+  /** User's real persisted biometric records (starts empty [] until Health Connect sync or manual log). */
+  records: DailyBiometricRecord[];
   habitDefinitions: HabitDefinition[];
+  /** User's real persisted blood lab biomarkers (starts empty [] until user enters real results). */
   labBiomarkers: LabBiomarker[];
   coachHistory: CoachMessage[];
 }

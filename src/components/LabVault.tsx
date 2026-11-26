@@ -1,137 +1,182 @@
 import React, { useState } from 'react';
 import { FlaskConical, Plus, Trash2, X } from 'lucide-react';
 import { LabBiomarker } from '../types/health';
+import { LAB_BIOMARKER_TEMPLATES } from '../services/healthConnectBridge';
 
 interface LabVaultProps {
   biomarkers: LabBiomarker[];
+  isDemoMode: boolean;
   onAddBiomarker: (marker: LabBiomarker) => void;
   onDeleteBiomarker: (id: string) => void;
 }
 
 export const LabVault: React.FC<LabVaultProps> = ({
   biomarkers,
+  isDemoMode,
   onAddBiomarker,
   onDeleteBiomarker,
 }) => {
   const [modalOpen, setModalOpen] = useState(false);
   const [name, setName] = useState('');
   const [category, setCategory] = useState<LabBiomarker['category']>('vitamins');
-  const [value, setValue] = useState(50);
+  const [value, setValue] = useState('');
   const [unit, setUnit] = useState('ng/mL');
   const [optimalMin, setOptimalMin] = useState(40);
   const [optimalMax, setOptimalMax] = useState(70);
   const [normalMin, setNormalMin] = useState(20);
   const [normalMax, setNormalMax] = useState(100);
   const [testedDate, setTestedDate] = useState(new Date().toISOString().slice(0, 10));
+  const [notes, setNotes] = useState('');
+
+  const openWithTemplate = (tpl?: (typeof LAB_BIOMARKER_TEMPLATES)[number]) => {
+    if (tpl) {
+      setName(tpl.name);
+      setCategory(tpl.category);
+      setUnit(tpl.unit);
+      setOptimalMin(tpl.optimalMin);
+      setOptimalMax(tpl.optimalMax);
+      setNormalMin(tpl.normalMin);
+      setNormalMax(tpl.normalMax);
+      setValue('');
+      setNotes('');
+    } else {
+      setName('');
+      setValue('');
+      setNotes('');
+    }
+    setModalOpen(true);
+  };
 
   const handleSave = (e: React.FormEvent) => {
     e.preventDefault();
-    if (!name.trim()) return;
+    if (!name.trim() || value === '') return;
     onAddBiomarker({
       id: `lab_${Date.now()}`,
       name: name.trim(),
       category,
-      value,
+      value: Number(value),
       unit: unit.trim() || 'units',
       optimalMin,
       optimalMax,
       normalMin,
       normalMax,
       testedDate,
+      notes: notes.trim() || undefined,
     });
-    setName('');
     setModalOpen(false);
   };
 
   return (
-    <div className="space-y-3">
-      <div className="flex items-center justify-between">
-        <div className="flex items-center gap-2">
-          <FlaskConical className="h-4 w-4 text-indigo-400" />
+    <section className="aether-glass space-y-3.5 rounded-3xl p-4 shadow-glass">
+      <div className="flex items-center justify-between gap-2">
+        <div className="flex items-center gap-2.5">
+          <div className="flex h-9 w-9 items-center justify-center rounded-2xl bg-indigo-500/15 text-indigo-400">
+            <FlaskConical className="h-4 w-4" />
+          </div>
           <div>
             <h3 className="text-sm font-semibold text-white">Offline Medical & Lab Vault</h3>
-            <p className="text-[11px] text-slate-400">
-              Encrypted-at-rest local browser storage • Optimal athletic ranges
+            <p className="text-xs text-slate-400">
+              {isDemoMode ? 'Showing Demo Samples' : `${biomarkers.length} personal lab reports saved locally`}
             </p>
           </div>
         </div>
-        <button
-          type="button"
-          onClick={() => setModalOpen(true)}
-          className="flex items-center gap-1 rounded-full border border-indigo-400/35 bg-indigo-500/15 px-3 py-1.5 text-xs font-semibold text-indigo-200 hover:bg-indigo-500/25"
-        >
-          <Plus className="h-3.5 w-3.5" />
-          Add
-        </button>
+        {!isDemoMode && (
+          <button
+            type="button"
+            onClick={() => openWithTemplate()}
+            className="flex items-center gap-1 rounded-full border border-indigo-400/35 bg-indigo-500/15 px-3 py-1.5 text-xs font-semibold text-indigo-200"
+          >
+            <Plus className="h-3.5 w-3.5" />
+            Add Lab
+          </button>
+        )}
       </div>
 
-      <div className="space-y-2.5">
-        {biomarkers.map((m) => {
-          const inOptimal = m.value >= m.optimalMin && m.value <= m.optimalMax;
-          const inNormal = m.value >= m.normalMin && m.value <= m.normalMax;
-          const statusColor = inOptimal
-            ? 'text-emerald-300 border-emerald-500/25 bg-emerald-500/15'
-            : inNormal
-              ? 'text-amber-300 border-amber-500/25 bg-amber-500/15'
-              : 'text-rose-300 border-rose-500/25 bg-rose-500/15';
-          const statusLabel = inOptimal ? 'Optimal' : inNormal ? 'Borderline' : 'Out of Range';
+      {biomarkers.length === 0 ? (
+        <div className="space-y-3 rounded-2xl border border-dashed border-white/15 bg-white/[0.02] p-4">
+          <p className="text-center text-xs leading-relaxed text-slate-300">
+            Your Medical Lab Vault is completely empty—no placeholder results are pre-filled. Tap a biomarker below to enter your own blood test value:
+          </p>
+          <div className="flex flex-wrap justify-center gap-1.5">
+            {LAB_BIOMARKER_TEMPLATES.map((tpl) => (
+              <button
+                key={tpl.name}
+                type="button"
+                onClick={() => openWithTemplate(tpl)}
+                className="rounded-full border border-white/12 bg-white/[0.05] px-3 py-1.5 text-[11px] font-medium text-slate-200 hover:border-indigo-400/50"
+              >
+                + {tpl.name}
+              </button>
+            ))}
+          </div>
+        </div>
+      ) : (
+        <div className="space-y-2.5">
+          {biomarkers.map((m) => {
+            const inOptimal = m.value >= m.optimalMin && m.value <= m.optimalMax;
+            const inNormal = m.value >= m.normalMin && m.value <= m.normalMax;
+            const statusColor = inOptimal
+              ? 'text-emerald-300 border-emerald-500/25 bg-emerald-500/15'
+              : inNormal
+                ? 'text-amber-300 border-amber-500/25 bg-amber-500/15'
+                : 'text-rose-300 border-rose-500/25 bg-rose-500/15';
+            const statusLabel = inOptimal ? 'Optimal' : inNormal ? 'Borderline' : 'Out of Range';
 
-          const rangeSpan = Math.max(0.01, m.normalMax - m.normalMin);
-          const optLeftPct = Math.max(0, Math.min(100, ((m.optimalMin - m.normalMin) / rangeSpan) * 100));
-          const optWidthPct = Math.max(6, Math.min(100 - optLeftPct, ((m.optimalMax - m.optimalMin) / rangeSpan) * 100));
-          const markerPct = Math.max(2, Math.min(98, ((m.value - m.normalMin) / rangeSpan) * 100));
+            const rangeSpan = Math.max(0.01, m.normalMax - m.normalMin);
+            const optLeftPct = Math.max(0, Math.min(100, ((m.optimalMin - m.normalMin) / rangeSpan) * 100));
+            const optWidthPct = Math.max(6, Math.min(100 - optLeftPct, ((m.optimalMax - m.optimalMin) / rangeSpan) * 100));
+            const markerPct = Math.max(2, Math.min(98, ((m.value - m.normalMin) / rangeSpan) * 100));
 
-          return (
-            <div key={m.id} className="aether-glass rounded-2xl p-3.5">
-              <div className="flex items-start justify-between gap-2">
-                <div>
-                  <p className="text-sm font-medium text-white">{m.name}</p>
-                  <p className="tabular-mono text-[11px] text-slate-400">
-                    Optimal {m.optimalMin}–{m.optimalMax} {m.unit} • Tested {m.testedDate}
-                  </p>
-                </div>
-                <div className="flex items-center gap-2">
-                  <div className="text-right">
-                    <p className="tabular-mono text-sm font-bold text-white">
-                      {m.value}{' '}
-                      <span className="text-[11px] font-normal text-slate-400">{m.unit}</span>
+            return (
+              <div key={m.id} className="rounded-2xl border border-white/[0.07] bg-white/[0.025] p-3.5">
+                <div className="flex items-start justify-between gap-2">
+                  <div>
+                    <p className="text-sm font-semibold text-white">{m.name}</p>
+                    <p className="tabular-mono text-[11px] text-slate-400">
+                      Optimal {m.optimalMin}–{m.optimalMax} {m.unit} • {m.testedDate}
                     </p>
-                    <span className={`inline-block rounded-full border px-2 py-0.5 text-[10px] font-semibold ${statusColor}`}>
-                      {statusLabel}
-                    </span>
                   </div>
-                  <button
-                    type="button"
-                    onClick={() => onDeleteBiomarker(m.id)}
-                    className="p-1 text-slate-500 hover:text-rose-400"
-                    aria-label={`Delete ${m.name}`}
-                  >
-                    <Trash2 className="h-3.5 w-3.5" />
-                  </button>
+                  <div className="flex items-center gap-2">
+                    <div className="text-right">
+                      <p className="tabular-mono text-sm font-bold text-white">
+                        {m.value} <span className="text-[11px] font-normal text-slate-400">{m.unit}</span>
+                      </p>
+                      <span className={`inline-block rounded-full border px-2 py-0.5 text-[10px] font-semibold ${statusColor}`}>
+                        {statusLabel}
+                      </span>
+                    </div>
+                    {!isDemoMode && (
+                      <button
+                        type="button"
+                        onClick={() => onDeleteBiomarker(m.id)}
+                        className="p-1 text-slate-500 hover:text-rose-400"
+                        aria-label={`Delete ${m.name}`}
+                      >
+                        <Trash2 className="h-3.5 w-3.5" />
+                      </button>
+                    )}
+                  </div>
                 </div>
+
+                <div className="relative mt-3 h-2 w-full rounded-full bg-white/[0.08]">
+                  <div
+                    className="absolute top-0 h-full rounded-full bg-emerald-500/40"
+                    style={{ left: `${optLeftPct}%`, width: `${optWidthPct}%` }}
+                  />
+                  <div
+                    className={`absolute top-1/2 h-3.5 w-3.5 -translate-x-1/2 -translate-y-1/2 rounded-full border-2 border-[#07090D] ${
+                      inOptimal ? 'bg-emerald-400' : inNormal ? 'bg-amber-400' : 'bg-rose-500'
+                    }`}
+                    style={{ left: `${markerPct}%` }}
+                  />
+                </div>
+                {m.notes && <p className="mt-2 text-xs text-slate-400">{m.notes}</p>}
               </div>
+            );
+          })}
+        </div>
+      )}
 
-              {/* Optimal Reference Range Bar */}
-              <div className="relative mt-3 h-2 w-full rounded-full bg-white/[0.07]">
-                <div
-                  className="absolute top-0 h-full rounded-full bg-emerald-500/35"
-                  style={{ left: `${optLeftPct}%`, width: `${optWidthPct}%` }}
-                />
-                <div
-                  className={`absolute top-1/2 h-3.5 w-3.5 -translate-x-1/2 -translate-y-1/2 rounded-full border-2 border-[#07090D] ${
-                    inOptimal ? 'bg-emerald-400' : inNormal ? 'bg-amber-400' : 'bg-rose-500'
-                  }`}
-                  style={{ left: `${markerPct}%` }}
-                />
-              </div>
-
-              {m.notes && <p className="mt-2 text-[11px] text-slate-400">{m.notes}</p>}
-            </div>
-          );
-        })}
-      </div>
-
-      {/* Add Biomarker Modal */}
       {modalOpen && (
         <div
           className="fixed inset-0 z-50 flex items-end justify-center bg-black/75 backdrop-blur-sm sm:items-center sm:p-4"
@@ -143,7 +188,7 @@ export const LabVault: React.FC<LabVaultProps> = ({
             className="aether-glass-elevated w-full max-w-md space-y-3 rounded-t-3xl p-5 shadow-glass sm:rounded-3xl"
           >
             <div className="flex items-center justify-between">
-              <h3 className="text-sm font-semibold text-white">Add Blood Biomarker</h3>
+              <h3 className="text-sm font-semibold text-white">Add Personal Blood Biomarker</h3>
               <button
                 type="button"
                 onClick={() => setModalOpen(false)}
@@ -159,7 +204,7 @@ export const LabVault: React.FC<LabVaultProps> = ({
                 required
                 value={name}
                 onChange={(e) => setName(e.target.value)}
-                placeholder="e.g., Ferritin, HbA1c"
+                placeholder="Biomarker name"
                 className="col-span-2 rounded-xl border border-white/10 bg-[#07090D] px-3 py-2 text-xs text-white"
               />
               <select
@@ -177,17 +222,19 @@ export const LabVault: React.FC<LabVaultProps> = ({
 
             <div className="grid grid-cols-3 gap-2">
               <div>
-                <label className="text-[10px] text-slate-400">Result Value</label>
+                <label className="text-[11px] text-slate-400">Your Result</label>
                 <input
                   type="number"
+                  required
                   step="0.01"
                   value={value}
-                  onChange={(e) => setValue(Number(e.target.value))}
-                  className="tabular-mono mt-1 w-full rounded-xl border border-white/10 bg-[#07090D] px-2.5 py-2 text-xs text-white"
+                  onChange={(e) => setValue(e.target.value)}
+                  placeholder="Enter value"
+                  className="tabular-mono mt-1 w-full rounded-xl border border-indigo-400/40 bg-[#07090D] px-2.5 py-2 text-xs text-white"
                 />
               </div>
               <div>
-                <label className="text-[10px] text-slate-400">Unit</label>
+                <label className="text-[11px] text-slate-400">Unit</label>
                 <input
                   type="text"
                   value={unit}
@@ -196,7 +243,7 @@ export const LabVault: React.FC<LabVaultProps> = ({
                 />
               </div>
               <div>
-                <label className="text-[10px] text-slate-400">Date</label>
+                <label className="text-[11px] text-slate-400">Test Date</label>
                 <input
                   type="date"
                   value={testedDate}
@@ -208,7 +255,7 @@ export const LabVault: React.FC<LabVaultProps> = ({
 
             <div className="grid grid-cols-2 gap-2">
               <div>
-                <label className="text-[10px] text-slate-400">Optimal Min / Max</label>
+                <label className="text-[11px] text-slate-400">Optimal Min / Max</label>
                 <div className="mt-1 flex gap-1.5">
                   <input
                     type="number"
@@ -227,7 +274,7 @@ export const LabVault: React.FC<LabVaultProps> = ({
                 </div>
               </div>
               <div>
-                <label className="text-[10px] text-slate-400">Lab Ref Min / Max</label>
+                <label className="text-[11px] text-slate-400">Lab Ref Min / Max</label>
                 <div className="mt-1 flex gap-1.5">
                   <input
                     type="number"
@@ -247,15 +294,23 @@ export const LabVault: React.FC<LabVaultProps> = ({
               </div>
             </div>
 
+            <input
+              type="text"
+              value={notes}
+              onChange={(e) => setNotes(e.target.value)}
+              placeholder="Optional note (e.g. lab name, supplement plan)"
+              className="w-full rounded-xl border border-white/10 bg-[#07090D] px-3 py-2 text-xs text-white"
+            />
+
             <button
               type="submit"
-              className="w-full rounded-xl bg-indigo-500 py-2.5 text-xs font-bold text-white hover:bg-indigo-400"
+              className="w-full rounded-2xl bg-indigo-500 py-3 text-xs font-bold text-white"
             >
-              Save to Offline Vault
+              Save to Offline Lab Vault
             </button>
           </form>
         </div>
       )}
-    </div>
+    </section>
   );
 };

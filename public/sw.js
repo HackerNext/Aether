@@ -1,7 +1,5 @@
-// Strictly isolated Service Worker cache namespace for AETHER OS.
-// Never touches caches belonging to other apps hosted on the same GitHub Pages domain.
 const AETHER_CACHE_PREFIX = 'aether-os-pwa-cache-';
-const CACHE_NAME = `${AETHER_CACHE_PREFIX}v1`;
+const CACHE_NAME = `${AETHER_CACHE_PREFIX}v2`;
 
 const CORE_ASSETS = [
   './',
@@ -32,10 +30,7 @@ self.addEventListener('activate', (event) => {
 self.addEventListener('fetch', (event) => {
   if (event.request.method !== 'GET') return;
   const reqUrl = new URL(event.request.url);
-
-  // Only handle same-origin requests inside AETHER's own scope; pass API calls straight through.
   if (reqUrl.origin !== self.location.origin) return;
-
   event.respondWith(
     fetch(event.request)
       .then((response) => {

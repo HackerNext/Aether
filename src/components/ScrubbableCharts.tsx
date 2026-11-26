@@ -1,4 +1,5 @@
 import React, { useMemo, useState } from 'react';
+import { BarChart3 } from 'lucide-react';
 import { DailyBiometricRecord, UserProfile } from '../types/health';
 import {
   computeBiologicalAge,
@@ -9,16 +10,17 @@ import {
 interface ScrubbableChartsProps {
   records: DailyBiometricRecord[];
   profile: UserProfile;
+  onGoToVault: () => void;
 }
 
 type TimeframeDays = 7 | 30 | 90;
 
 interface LineSeriesChartProps {
   title: string;
+  description: string;
   unit: string;
   accentHex: string;
-  dates: string[];
-  values: number[];
+  points: { date: string; value: number }[];
   secondaryLabel?: string;
   sweetSpotBand?: [number, number];
   baselineValue?: number;
@@ -27,61 +29,72 @@ interface LineSeriesChartProps {
 
 const ScrubbableLineCard: React.FC<LineSeriesChartProps> = ({
   title,
+  description,
   unit,
   accentHex,
-  dates,
-  values,
+  points,
   secondaryLabel,
   sweetSpotBand,
   baselineValue,
   formatter = (v) => String(v),
 }) => {
-  const [activeIdx, setActiveIdx] = useState<number>(values.length - 1);
-  const safeIdx = Math.min(activeIdx, Math.max(0, values.length - 1));
+  const [activeIdx, setActiveIdx] = useState<number>(Math.max(0, points.length - 1));
+  const safeIdx = Math.min(activeIdx, Math.max(0, points.length - 1));
 
+  if (points.length === 0) {
+    return (
+      <div className="aether-glass rounded-3xl p-4 shadow-glass">
+        <h3 className="text-sm font-semibold text-white">{title}</h3>
+        <p className="mt-0.5 text-xs text-slate-400">{description}</p>
+        <div className="mt-3 rounded-2xl border border-dashed border-white/10 bg-white/[0.02] py-6 text-center text-xs text-slate-500">
+          No {title.toLowerCase()} records synced yet
+        </div>
+      </div>
+    );
+  }
+
+  const values = points.map((p) => p.value);
   const minRaw = Math.min(...values, sweetSpotBand ? sweetSpotBand[0] : Infinity, baselineValue ?? Infinity);
   const maxRaw = Math.max(...values, sweetSpotBand ? sweetSpotBand[1] : -Infinity, baselineValue ?? -Infinity);
-  const pad = Math.max((maxRaw - minRaw) * 0.14, 0.5);
+  const pad = Math.max((maxRaw - minRaw) * 0.15, 0.5);
   const minY = minRaw - pad;
   const maxY = maxRaw + pad;
 
   const w = 340;
   const h = 112;
-  const toX = (i: number) => (i / Math.max(1, values.length - 1)) * w;
+  const toX = (i: number) => (points.length === 1 ? w / 2 : (i / (points.length - 1)) * w);
   const toY = (v: number) => h - ((v - minY) / Math.max(0.001, maxY - minY)) * (h - 16) - 8;
 
   const pathPoints = values.map((v, i) => `${toX(i).toFixed(1)},${toY(v).toFixed(1)}`).join(' ');
-  const areaPoints = `0,${h} ${pathPoints} ${w},${h}`;
+  const areaPoints = points.length > 1 ? `0,${h} ${pathPoints} ${w},${h}` : '';
 
   const handlePointer = (e: React.PointerEvent<SVGSVGElement>) => {
+    if (points.length < 2) return;
     const rect = e.currentTarget.getBoundingClientRect();
     const relX = Math.max(0, Math.min(1, (e.clientX - rect.left) / Math.max(1, rect.width)));
-    const idx = Math.round(relX * (values.length - 1));
-    setActiveIdx(idx);
+    setActiveIdx(Math.round(relX * (points.length - 1)));
   };
 
-  const activeVal = values[safeIdx] ?? 0;
-  const activeDate = dates[safeIdx] ?? '';
-  const cx = toX(safeIdx);
-  const cy = toY(activeVal);
+  const activePt = points[safeIdx];
+  const avgVal = values.reduce((a, b) => a + b, 0) / values.length;
 
   return (
     <div className="aether-glass rounded-3xl p-4 shadow-glass">
-      <div className="mb-3 flex items-end justify-between">
+      <div className="mb-3 flex items-start justify-between gap-2">
         <div>
-          <p className="text-[11px] font-semibold uppercase tracking-[0.12em] text-slate-400">
-            {title}
-          </p>
-          <div className="mt-0.5 flex items-baseline gap-1.5">
+          <h3 className="text-sm font-semibold text-white">{title}</h3>
+          <p className="text-[11px] text-slate-400">{description}</p>
+          <div className="mt-1.5 flex items-baseline gap-1.5">
             <span className="tabular-mono text-2xl font-bold text-white">
-              {formatter(activeVal)}
+              {formatter(activePt.value)}
             </span>
             <span className="text-xs text-slate-400">{unit}</span>
           </div>
         </div>
         <div className="text-right">
-          <p className="tabular-mono text-xs font-medium text-slate-300">{activeDate}</p>
-          {secondaryLabel && <p className="text-[11px] text-slate-500">{secondaryLabel}</p>}
+          <p className="tabular-mono text-xs font-semibold text-slate-200">{activePt.date}</p>
+          <p className="tabular-mono text-[11px] text-slate-400">Avg {formatter(Number(avgVal.toFixed(1)))}</p>
+          {secondaryLabel && <p className="text-[10px] text-slate-500">{secondaryLabel}</p>}
         </div>
       </div>
 
@@ -123,75 +136,105 @@ const ScrubbableLineCard: React.FC<LineSeriesChartProps> = ({
           />
         )}
 
-        <polygon points={areaPoints} fill={`url(#grad_${title.replace(/\W/g, '')})`} />
-        <polyline
-          fill="none"
-          stroke={accentHex}
-          strokeWidth="2.2"
-          strokeLinecap="round"
-          strokeLinejoin="round"
-          points={pathPoints}
-        />
-
-        {/* Scrub Crosshair */}
+        {areaPoints && <polygon points={areaPoints} fill={`url(#grad_${title.replace(/\W/g, '')})`} />}
+        {points.length > 1 && (
+          <polyline
+            fill="none"
+            stroke={accentHex}
+            strokeWidth="2.4"
+            strokeLinecap="round"
+            strokeLinejoin="round"
+            points={pathPoints}
+          />
+        )}
         <line
-          x1={cx}
-          x2={cx}
+          x1={toX(safeIdx)}
+          x2={toX(safeIdx)}
           y1={0}
           y2={h}
           stroke="rgba(255,255,255,0.25)"
           strokeWidth="1"
           strokeDasharray="2 3"
         />
-        <circle cx={cx} cy={cy} r="5.5" fill="#07090D" stroke={accentHex} strokeWidth="2.5" />
+        <circle cx={toX(safeIdx)} cy={toY(activePt.value)} r="5.5" fill="#07090D" stroke={accentHex} strokeWidth="2.5" />
       </svg>
-      <p className="mt-1.5 text-[10px] text-slate-500">Touch or drag along chart to inspect exact day</p>
     </div>
   );
 };
 
-export const ScrubbableCharts: React.FC<ScrubbableChartsProps> = ({ records, profile }) => {
+export const ScrubbableCharts: React.FC<ScrubbableChartsProps> = ({
+  records,
+  profile,
+  onGoToVault,
+}) => {
   const [timeframe, setTimeframe] = useState<TimeframeDays>(30);
-  const [sleepIdx, setSleepIdx] = useState<number>(timeframe - 1);
+  const [sleepIdx, setSleepIdx] = useState<number>(0);
 
   const slice = useMemo(() => records.slice(-timeframe), [records, timeframe]);
-  const safeSleepIdx = Math.min(sleepIdx, Math.max(0, slice.length - 1));
-  const selectedSleepDay = slice[safeSleepIdx] ?? slice[slice.length - 1];
+  const sleepDays = useMemo(() => slice.filter((r) => r.sleep && r.sleep.totalSleepMin > 0), [slice]);
+  const safeSleepIdx = Math.min(sleepIdx, Math.max(0, sleepDays.length - 1));
+  const selectedSleepDay = sleepDays[safeSleepIdx] ?? sleepDays[sleepDays.length - 1] ?? null;
 
-  const rhrBaseline = useMemo(() => {
-    const last30 = records.slice(-30);
-    return Number(
-      (last30.reduce((s, r) => s + r.restingHrBpm, 0) / Math.max(1, last30.length)).toFixed(1)
-    );
-  }, [records]);
-
-  const acwrSeries = useMemo(() => {
-    const startOffset = Math.max(0, records.length - slice.length);
-    return slice.map((_, i) => computeCardioLoadAcwr(records, startOffset + i).ratio);
-  }, [records, slice]);
-
-  const bioAgeSeries = useMemo(() => {
-    const startOffset = Math.max(0, records.length - slice.length);
-    return slice.map((_, i) => {
-      const sub = records.slice(0, startOffset + i + 1);
-      return computeBiologicalAge(sub, profile, Math.min(30, sub.length)).biologicalAge;
-    });
-  }, [records, slice, profile]);
-
-  const latestBioAge = useMemo(
-    () => computeBiologicalAge(records, profile, timeframe === 90 ? 90 : 30),
-    [records, profile, timeframe]
+  const rhrPoints = useMemo(
+    () =>
+      slice
+        .filter((r) => r.restingHrBpm !== null && r.restingHrBpm > 0)
+        .map((r) => ({ date: r.date, value: r.restingHrBpm! })),
+    [slice]
   );
 
-  const dates = slice.map((r) => r.date);
+  const spo2Points = useMemo(
+    () =>
+      slice
+        .filter((r) => r.spo2Pct !== null && r.spo2Pct > 0)
+        .map((r) => ({ date: r.date, value: r.spo2Pct! })),
+    [slice]
+  );
+
+  const acwrPoints = useMemo(() => {
+    const startOffset = Math.max(0, records.length - slice.length);
+    return slice
+      .map((r, i) => ({ date: r.date, value: computeCardioLoadAcwr(records, startOffset + i).ratio }))
+      .filter((p): p is { date: string; value: number } => p.value !== null);
+  }, [records, slice]);
+
+  const bioAgePoints = useMemo(() => {
+    const startOffset = Math.max(0, records.length - slice.length);
+    return slice
+      .map((r, i) => {
+        const sub = records.slice(0, startOffset + i + 1);
+        return { date: r.date, value: computeBiologicalAge(sub, profile, Math.min(30, sub.length)).biologicalAge };
+      })
+      .filter((p): p is { date: string; value: number } => p.value !== null);
+  }, [records, slice, profile]);
+
+  if (records.length === 0) {
+    return (
+      <div className="aether-glass rounded-3xl p-6 text-center shadow-glass">
+        <div className="mx-auto mb-3 flex h-12 w-12 items-center justify-center rounded-2xl bg-indigo-500/15 text-indigo-400">
+          <BarChart3 className="h-6 w-6" />
+        </div>
+        <h2 className="text-base font-semibold text-white">Biology & Longitudinal Trends</h2>
+        <p className="mt-1.5 text-xs leading-relaxed text-slate-400">
+          Your charts are currently empty because no fake boilerplate data is loaded. Connect Android Health Connect (Mi Fitness / Zepp / Fitbit) or log your daily vitals to start building your 7D / 30D / 90D biometric trends.
+        </p>
+        <button
+          type="button"
+          onClick={onGoToVault}
+          className="mt-4 rounded-2xl bg-emerald-500 px-5 py-2.5 text-xs font-bold text-obsidian"
+        >
+          Go to Health Connect & Devices
+        </button>
+      </div>
+    );
+  }
 
   return (
     <div className="space-y-4">
-      {/* Timeframe Segmented Switcher */}
       <div className="flex items-center justify-between">
         <div>
-          <h2 className="text-base font-semibold text-white">Biology & Trends</h2>
-          <p className="text-xs text-slate-400">Scrubbable longitudinal telemetry</p>
+          <h2 className="text-base font-bold text-white">Biology & Trends</h2>
+          <p className="text-xs text-slate-400">{records.length} tracked days • Touch charts to scrub</p>
         </div>
         <div className="aether-glass flex rounded-full p-1">
           {([7, 30, 90] as TimeframeDays[]).map((tf) => (
@@ -200,12 +243,10 @@ export const ScrubbableCharts: React.FC<ScrubbableChartsProps> = ({ records, pro
               type="button"
               onClick={() => {
                 setTimeframe(tf);
-                setSleepIdx(tf - 1);
+                setSleepIdx(999);
               }}
               className={`tabular-mono rounded-full px-3 py-1 text-xs font-semibold transition ${
-                timeframe === tf
-                  ? 'bg-white/15 text-white'
-                  : 'text-slate-400 hover:text-slate-200'
+                timeframe === tf ? 'bg-white/15 text-white' : 'text-slate-400'
               }`}
             >
               {tf}D
@@ -214,146 +255,118 @@ export const ScrubbableCharts: React.FC<ScrubbableChartsProps> = ({ records, pro
         </div>
       </div>
 
-      {/* 1. Resting Heart Rate */}
       <ScrubbableLineCard
         title="Resting Heart Rate"
+        description="Lower values vs baseline indicate stronger autonomic recovery"
         unit="bpm"
         accentHex="#10B981"
-        dates={dates}
-        values={slice.map((r) => r.restingHrBpm)}
-        baselineValue={rhrBaseline}
-        secondaryLabel={`30d Baseline ${rhrBaseline} bpm`}
+        points={rhrPoints}
       />
 
-      {/* 2. Sleep Stages Stacked Interactive Bars */}
-      {selectedSleepDay && (
-        <div className="aether-glass rounded-3xl p-4 shadow-glass">
-          <div className="mb-3 flex items-end justify-between">
-            <div>
-              <p className="text-[11px] font-semibold uppercase tracking-[0.12em] text-slate-400">
-                Sleep Architecture
-              </p>
-              <p className="tabular-mono mt-0.5 text-2xl font-bold text-white">
-                {formatMinutesToHm(selectedSleepDay.sleep.totalSleepMin)}
-              </p>
-            </div>
+      {/* Sleep Architecture Stacked Chart */}
+      <div className="aether-glass rounded-3xl p-4 shadow-glass">
+        <div className="mb-3 flex items-start justify-between">
+          <div>
+            <h3 className="text-sm font-semibold text-white">Sleep Architecture Stages</h3>
+            <p className="text-[11px] text-slate-400">Deep, REM, Light & Awake nightly breakdown</p>
+            <p className="tabular-mono mt-1.5 text-2xl font-bold text-white">
+              {selectedSleepDay?.sleep ? formatMinutesToHm(selectedSleepDay.sleep.totalSleepMin) : '--'}
+            </p>
+          </div>
+          {selectedSleepDay?.sleep && (
             <div className="text-right">
-              <p className="tabular-mono text-xs font-medium text-slate-300">
-                {selectedSleepDay.date}
-              </p>
+              <p className="tabular-mono text-xs font-semibold text-slate-200">{selectedSleepDay.date}</p>
               <p className="tabular-mono text-[11px] text-indigo-300">
-                {selectedSleepDay.sleep.efficiencyPct}% Eff.
+                {selectedSleepDay.sleep.efficiencyPct}% efficiency
               </p>
             </div>
-          </div>
-
-          <div
-            className="flex h-28 items-end gap-[3px] touch-none"
-            onPointerMove={(e) => {
-              if (e.buttons !== 1 && e.pointerType !== 'touch') return;
-              const rect = e.currentTarget.getBoundingClientRect();
-              const rel = Math.max(0, Math.min(1, (e.clientX - rect.left) / Math.max(1, rect.width)));
-              setSleepIdx(Math.round(rel * (slice.length - 1)));
-            }}
-          >
-            {slice.map((rec, idx) => {
-              const total = Math.max(1, rec.sleep.timeInBedMin);
-              const heightPct = Math.min(100, (total / 560) * 100);
-              const isSelected = idx === safeSleepIdx;
-              return (
-                <button
-                  key={rec.date}
-                  type="button"
-                  onClick={() => setSleepIdx(idx)}
-                  className={`flex h-full flex-1 flex-col justify-end rounded-sm transition ${
-                    isSelected ? 'opacity-100 ring-1 ring-white/50' : 'opacity-70 hover:opacity-95'
-                  }`}
-                  title={`${rec.date}: ${formatMinutesToHm(rec.sleep.totalSleepMin)}`}
-                >
-                  <div
-                    className="flex w-full flex-col overflow-hidden rounded-t-sm"
-                    style={{ height: `${heightPct}%` }}
-                  >
-                    <div
-                      style={{ flex: rec.sleep.stages.awakeMin }}
-                      className="bg-amber-400/80"
-                    />
-                    <div
-                      style={{ flex: rec.sleep.stages.lightMin }}
-                      className="bg-slate-500/70"
-                    />
-                    <div
-                      style={{ flex: rec.sleep.stages.remMin }}
-                      className="bg-cyan-400/85"
-                    />
-                    <div
-                      style={{ flex: rec.sleep.stages.deepMin }}
-                      className="bg-indigo-400"
-                    />
-                  </div>
-                </button>
-              );
-            })}
-          </div>
-
-          <div className="mt-3 grid grid-cols-4 gap-2 text-center text-[11px]">
-            <div className="rounded-lg bg-white/[0.03] py-1">
-              <span className="inline-block h-2 w-2 rounded-full bg-indigo-400 mr-1" />
-              <span className="text-slate-400">Deep </span>
-              <span className="tabular-mono text-slate-200">{selectedSleepDay.sleep.stages.deepMin}m</span>
-            </div>
-            <div className="rounded-lg bg-white/[0.03] py-1">
-              <span className="inline-block h-2 w-2 rounded-full bg-cyan-400 mr-1" />
-              <span className="text-slate-400">REM </span>
-              <span className="tabular-mono text-slate-200">{selectedSleepDay.sleep.stages.remMin}m</span>
-            </div>
-            <div className="rounded-lg bg-white/[0.03] py-1">
-              <span className="inline-block h-2 w-2 rounded-full bg-slate-500 mr-1" />
-              <span className="text-slate-400">Light </span>
-              <span className="tabular-mono text-slate-200">{selectedSleepDay.sleep.stages.lightMin}m</span>
-            </div>
-            <div className="rounded-lg bg-white/[0.03] py-1">
-              <span className="inline-block h-2 w-2 rounded-full bg-amber-400 mr-1" />
-              <span className="text-slate-400">Awake </span>
-              <span className="tabular-mono text-slate-200">{selectedSleepDay.sleep.stages.awakeMin}m</span>
-            </div>
-          </div>
+          )}
         </div>
-      )}
 
-      {/* 3. Blood Oxygen (SpO2) */}
+        {sleepDays.length === 0 ? (
+          <div className="rounded-2xl border border-dashed border-white/10 bg-white/[0.02] py-6 text-center text-xs text-slate-500">
+            No sleep sessions synced yet
+          </div>
+        ) : (
+          <>
+            <div className="flex h-28 items-end gap-1">
+              {sleepDays.map((rec, idx) => {
+                const slp = rec.sleep!;
+                const heightPct = Math.min(100, (slp.timeInBedMin / 560) * 100);
+                const selected = idx === safeSleepIdx;
+                return (
+                  <button
+                    key={rec.date}
+                    type="button"
+                    onClick={() => setSleepIdx(idx)}
+                    className={`flex h-full flex-1 flex-col justify-end rounded-sm transition ${
+                      selected ? 'opacity-100 ring-1 ring-white/50' : 'opacity-70'
+                    }`}
+                  >
+                    <div className="flex w-full flex-col overflow-hidden rounded-t-sm" style={{ height: `${heightPct}%` }}>
+                      <div style={{ flex: slp.stages.awakeMin }} className="bg-amber-400/85" />
+                      <div style={{ flex: slp.stages.lightMin }} className="bg-slate-500/75" />
+                      <div style={{ flex: slp.stages.remMin }} className="bg-cyan-400/85" />
+                      <div style={{ flex: slp.stages.deepMin }} className="bg-indigo-400" />
+                    </div>
+                  </button>
+                );
+              })}
+            </div>
+            {selectedSleepDay?.sleep && (
+              <div className="mt-3 grid grid-cols-4 gap-2 text-center text-[11px]">
+                <div className="rounded-xl bg-white/[0.03] py-1.5">
+                  <span className="text-indigo-300">Deep </span>
+                  <span className="tabular-mono text-white">{selectedSleepDay.sleep.stages.deepMin}m</span>
+                </div>
+                <div className="rounded-xl bg-white/[0.03] py-1.5">
+                  <span className="text-cyan-300">REM </span>
+                  <span className="tabular-mono text-white">{selectedSleepDay.sleep.stages.remMin}m</span>
+                </div>
+                <div className="rounded-xl bg-white/[0.03] py-1.5">
+                  <span className="text-slate-300">Light </span>
+                  <span className="tabular-mono text-white">{selectedSleepDay.sleep.stages.lightMin}m</span>
+                </div>
+                <div className="rounded-xl bg-white/[0.03] py-1.5">
+                  <span className="text-amber-300">Awake </span>
+                  <span className="tabular-mono text-white">{selectedSleepDay.sleep.stages.awakeMin}m</span>
+                </div>
+              </div>
+            )}
+          </>
+        )}
+      </div>
+
       <ScrubbableLineCard
-        title="Overnight SpO2"
+        title="Blood Oxygen (SpO2)"
+        description="Overnight respiratory oxygen saturation"
         unit="%"
         accentHex="#06B6D4"
-        dates={dates}
-        values={slice.map((r) => r.spo2Pct)}
+        points={spo2Points}
         sweetSpotBand={[95, 100]}
-        secondaryLabel="Normal Band ≥95%"
+        secondaryLabel="Normal ≥95%"
         formatter={(v) => v.toFixed(1)}
       />
 
-      {/* 4. Cardio Load (ACWR) */}
       <ScrubbableLineCard
         title="Cardio Load (ACWR)"
+        description="7-day acute vs 28-day chronic workload balance"
         unit="ratio"
         accentHex="#F59E0B"
-        dates={dates}
-        values={acwrSeries}
+        points={acwrPoints}
         sweetSpotBand={[0.8, 1.3]}
-        secondaryLabel="Sweet Spot 0.80–1.30"
+        secondaryLabel="Sweet Spot 0.8–1.3"
         formatter={(v) => v.toFixed(2)}
       />
 
-      {/* 5. Biological Age & Healthspan Pace */}
       <ScrubbableLineCard
         title="Biological Age"
+        description="Estimated physiological age from RHR, VO2 Max & sleep consistency"
         unit="yrs"
         accentHex="#818CF8"
-        dates={dates}
-        values={bioAgeSeries}
+        points={bioAgePoints}
         baselineValue={profile.chronologicalAge}
-        secondaryLabel={`Pace ${latestBioAge.healthspanPace}x • VO2 ${latestBioAge.vo2Max30dAvg}`}
+        secondaryLabel={`Chronological ${profile.chronologicalAge}`}
         formatter={(v) => v.toFixed(1)}
       />
     </div>
