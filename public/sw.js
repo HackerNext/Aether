@@ -1,5 +1,5 @@
 const AETHER_CACHE_PREFIX = 'aether-os-pwa-cache-';
-const CACHE_NAME = `${AETHER_CACHE_PREFIX}v2`;
+const CACHE_NAME = `${AETHER_CACHE_PREFIX}v3`;
 
 const CORE_ASSETS = [
   './',

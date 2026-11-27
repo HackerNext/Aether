@@ -1,6 +1,6 @@
 {
   "name": "aether-biometric-os",
-  "version": "2.0.0",
+  "version": "3.0.0",
   "private": true,
   "type": "module",
   "scripts": {
@@ -11,14 +11,14 @@
     "cap:sync": "npm run build && npx cap sync android"
   },
   "dependencies": {
-    "@capacitor/core": "^7.0.0",
+    "@capacitor/core": "^7.4.0",
     "lucide-react": "^0.460.0",
     "react": "^18.3.1",
     "react-dom": "^18.3.1"
   },
   "devDependencies": {
-    "@capacitor/android": "^7.0.0",
-    "@capacitor/cli": "^7.0.0",
+    "@capacitor/android": "^7.4.0",
+    "@capacitor/cli": "^7.4.0",
     "@types/react": "^18.3.12",
     "@types/react-dom": "^18.3.1",
     "@vitejs/plugin-react": "^4.3.3",

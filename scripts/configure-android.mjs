@@ -9,7 +9,6 @@ if (!fs.existsSync(androidDir)) {
   process.exit(1);
 }
 
-// 1. Update android/variables.gradle — Health Connect 1.1.0 stable requires compileSdk 36 + minSdk 26
 const varsPath = path.join(androidDir, 'variables.gradle');
 if (fs.existsSync(varsPath)) {
   let vars = fs.readFileSync(varsPath, 'utf8');
@@ -20,7 +19,6 @@ if (fs.existsSync(varsPath)) {
   console.log('[AETHER] Updated variables.gradle (minSdk 26, compileSdk 36, targetSdk 35).');
 }
 
-// 2. Upgrade Android Gradle Plugin to 8.9.1 (required by Health Connect 1.1.0) & add Kotlin 2.1.0
 const rootGradlePath = path.join(androidDir, 'build.gradle');
 let rootGradle = fs.readFileSync(rootGradlePath, 'utf8');
 rootGradle = rootGradle.replace(
@@ -34,9 +32,7 @@ if (!rootGradle.includes('kotlin-gradle-plugin')) {
   );
 }
 fs.writeFileSync(rootGradlePath, rootGradle, 'utf8');
-console.log('[AETHER] Updated android/build.gradle (AGP 8.9.1 + Kotlin 2.1.0).');
 
-// 3. Apply kotlin-android plugin + Health Connect 1.1.0 (Stable Android 14/15/16 Framework SDK)
 const appGradlePath = path.join(androidDir, 'app', 'build.gradle');
 let appGradle = fs.readFileSync(appGradlePath, 'utf8');
 if (!appGradle.includes('kotlin-android')) {
@@ -58,22 +54,22 @@ if (!appGradle.includes('androidx.health.connect:connect-client')) {
   );
 }
 fs.writeFileSync(appGradlePath, appGradle, 'utf8');
-console.log('[AETHER] Configured android/app/build.gradle (Health Connect 1.1.0 Stable).');
 
-// 4. Copy HealthConnectPlugin.kt into package folder
+// Copy HealthConnectPlugin.kt
 const pluginDir = path.join(androidDir, 'app', 'src', 'main', 'java', 'com', 'aetheros', 'biometrics', 'plugins');
 fs.mkdirSync(pluginDir, { recursive: true });
 fs.copyFileSync(
   path.join(root, 'android-native', 'HealthConnectPlugin.kt'),
   path.join(pluginDir, 'HealthConnectPlugin.kt')
 );
-console.log('[AETHER] Copied HealthConnectPlugin.kt.');
 
-// 5. Register HealthConnectPlugin in MainActivity.java
+// MainActivity.java: register plugin + light-on-dark system status/nav bar icons so bar never clashes
 const mainActivityPath = path.join(androidDir, 'app', 'src', 'main', 'java', 'com', 'aetheros', 'biometrics', 'MainActivity.java');
 const mainActivityContent = `package com.aetheros.biometrics;
 
+import android.graphics.Color;
 import android.os.Bundle;
+import androidx.core.view.WindowInsetsControllerCompat;
 import com.getcapacitor.BridgeActivity;
 import com.aetheros.biometrics.plugins.HealthConnectPlugin;
 
@@ -82,13 +78,17 @@ public class MainActivity extends BridgeActivity {
     public void onCreate(Bundle savedInstanceState) {
         registerPlugin(HealthConnectPlugin.class);
         super.onCreate(savedInstanceState);
+        getWindow().getDecorView().setBackgroundColor(Color.parseColor("#07090D"));
+        WindowInsetsControllerCompat controller =
+            new WindowInsetsControllerCompat(getWindow(), getWindow().getDecorView());
+        controller.setAppearanceLightStatusBars(false);
+        controller.setAppearanceLightNavigationBars(false);
     }
 }
 `;
 fs.writeFileSync(mainActivityPath, mainActivityContent, 'utf8');
-console.log('[AETHER] Patched MainActivity.java.');
 
-// 6. Merge Health Connect permissions & Android 14+ rationale alias into AndroidManifest.xml
+// Update AndroidManifest.xml
 const manifestPath = path.join(androidDir, 'app', 'src', 'main', 'AndroidManifest.xml');
 let manifest = fs.readFileSync(manifestPath, 'utf8');
 
@@ -136,15 +136,12 @@ ${rationaleBlock}`
   );
 }
 fs.writeFileSync(manifestPath, manifest, 'utf8');
-console.log('[AETHER] Updated AndroidManifest.xml with Android 14/15/16 Health Connect permissions.');
 
-// 7. Install AETHER custom launcher icons
+// Custom launcher icons
 const resDir = path.join(androidDir, 'app', 'src', 'main', 'res');
 const icon512 = path.join(root, 'public', 'icons', 'aether-512.png');
 const icon192 = path.join(root, 'public', 'icons', 'aether-192.png');
-const mipmapFolders = ['mipmap-mdpi', 'mipmap-hdpi', 'mipmap-xhdpi', 'mipmap-xxhdpi', 'mipmap-xxxhdpi'];
-
-for (const folder of mipmapFolders) {
+for (const folder of ['mipmap-mdpi', 'mipmap-hdpi', 'mipmap-xhdpi', 'mipmap-xxhdpi', 'mipmap-xxxhdpi']) {
   const targetDir = path.join(resDir, folder);
   if (fs.existsSync(targetDir)) {
     const src = folder === 'mipmap-mdpi' || folder === 'mipmap-hdpi' ? icon192 : icon512;
@@ -154,7 +151,6 @@ for (const folder of mipmapFolders) {
   }
 }
 const anydpi = path.join(resDir, 'mipmap-anydpi-v26');
-if (fs.existsSync(anydpi)) {
-  fs.rmSync(anydpi, { recursive: true, force: true });
-}
-console.log('[AETHER] Installed custom AETHER launcher icons.');
+if (fs.existsSync(anydpi)) fs.rmSync(anydpi, { recursive: true, force: true });
+
+console.log('[AETHER] Android project fully configured (SDK 36, AGP 8.9.1, Health Connect 1.1.0, Edge-to-Edge safe).');

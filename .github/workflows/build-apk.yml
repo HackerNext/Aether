@@ -21,7 +21,7 @@ jobs:
           distribution: 'temurin'
           java-version: '21'
 
-      - name: Ensure Android SDK 36 Platform is installed (Health Connect 1.1.0 Stable)
+      - name: Ensure Android SDK 36 Platform is installed
         run: |
           SDKMGR="${ANDROID_HOME}/cmdline-tools/latest/bin/sdkmanager"
           if [ -x "$SDKMGR" ]; then

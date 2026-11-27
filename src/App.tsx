@@ -1,19 +1,33 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import {
+  Activity,
+  AlertTriangle,
+  Award,
+  BarChart3,
   BatteryMedium,
+  BookOpen,
+  ChevronRight,
   Compass,
+  FlaskConical,
+  Gauge,
+  HeartHandshake,
+  HeartPulse,
+  Moon,
   Plus,
   RefreshCw,
-  Shield,
+  Settings,
+  SlidersHorizontal,
+  Sparkles,
   TrendingUp,
-  AlertTriangle,
+  Watch,
 } from 'lucide-react';
 import {
   ActiveTab,
   AetherAppState,
   DailyBiometricRecord,
-  DrilldownMetricType,
+  DedicatedPageId,
   HabitDefinition,
+  HooperWellnessLog,
   LabBiomarker,
   MealRecord,
   MorningBriefing,
@@ -33,12 +47,14 @@ import {
 } from './services/healthConnectBridge';
 import {
   computeAdaptiveRecovery,
-  computeBiologicalAge,
-  computeCardioLoadAcwr,
   computeDailyStrain,
+  computeFitnessAge,
   computeHabitCorrelations,
   computeSleepDebtPlan,
+  computeUncoupledEwmaWorkload,
   createEmptyDailyRecord,
+  formatMinutesToHm,
+  getEffectiveMaxHr,
   getTodayDateStr,
 } from './utils/biometricsEngine';
 import {
@@ -48,16 +64,18 @@ import {
   generateOfflineMorningBriefing,
 } from './services/aiCoachService';
 import { RadialGauges } from './components/RadialGauges';
-import { DetailedFeatureSections } from './components/DetailedFeatureSections';
-import { MetricDrilldownSheet } from './components/MetricDrilldownSheet';
 import { AICoachDrawer } from './components/AICoachDrawer';
-import { TimelineFeed } from './components/TimelineFeed';
-import { ScrubbableCharts } from './components/ScrubbableCharts';
-import { HabitCorrelations } from './components/HabitCorrelations';
-import { QuickLogHub } from './components/QuickLogHub';
-import { DeviceSyncWizard } from './components/DeviceSyncWizard';
-import { LabVault } from './components/LabVault';
-import { ManualVitalsPayload } from './components/ManualVitalsLogger';
+import { LogSubTab, ManualVitalsPayload, QuickLogHub } from './components/QuickLogHub';
+import { RecoveryPage } from './pages/RecoveryPage';
+import { StrainPage } from './pages/StrainPage';
+import { SleepPage } from './pages/SleepPage';
+import { FitnessAgePage } from './pages/FitnessAgePage';
+import { HabitsLabPage } from './pages/HabitsLabPage';
+import { TrendsPage } from './pages/TrendsPage';
+import { DevicesPage } from './pages/DevicesPage';
+import { LabVaultPage } from './pages/LabVaultPage';
+import { SettingsPage } from './pages/SettingsPage';
+import { ScienceDocsPage } from './pages/ScienceDocsPage';
 
 function createCleanInitialState(): AetherAppState {
   const redmi = WEARABLE_PRESETS[0];
@@ -65,11 +83,15 @@ function createCleanInitialState(): AetherAppState {
     profile: {
       name: 'User',
       chronologicalAge: 20,
-      maxHrBpm: 200,
+      observedMaxHrBpm: null,
       bodyWeightKg: 59,
+      personalSleepNeedMin: 450, // 7h 30m sensible default (auto-calibrates via Hooper check-in)
+      autoCalibrateSleepNeed: true,
       targetWakeTime: '06:45',
       dailyWaterGoalMl: 3000,
       dailyCalorieGoal: 2300,
+      cooper12MinMeters: null,
+      fiveKmTimeSeconds: null,
       geminiApiKey: '',
     },
     device: {
@@ -102,10 +124,10 @@ function createCleanInitialState(): AetherAppState {
     labBiomarkers: [],
     coachHistory: [
       {
-        id: 'welcome_clean',
+        id: 'welcome_v3',
         role: 'assistant',
         content:
-          'AETHER starts clean with zero fake data. Connect Android Health Connect in the Vault tab (for Redmi Watch 5 Lite / Mi Fitness) or log your own vitals, habits, and workouts in + Log.',
+          'AETHER v3.0 starts clean with zero fake data. Connect Android Health Connect in System → Watch, or complete a 15-second Morning Wellness check-in in Log.',
         timestampIso: new Date().toISOString(),
       },
     ],
@@ -123,17 +145,16 @@ function formatSyncAgo(iso: string | null): string {
 export default function App() {
   const [state, setState] = useState<AetherAppState>(() => loadAetherState() ?? createCleanInitialState());
   const [activeTab, setActiveTab] = useState<ActiveTab>('today');
-  const [drilldownMetric, setDrilldownMetric] = useState<DrilldownMetricType>(null);
+  const [activePage, setActivePage] = useState<DedicatedPageId>(null);
+  const [logSubTab, setLogSubTab] = useState<LogSubTab>('wellness');
   const [isSyncing, setIsSyncing] = useState(false);
   const [syncMessage, setSyncMessage] = useState('');
   const [isRefreshingBriefing, setIsRefreshingBriefing] = useState(false);
 
-  // Persist real user state cleanly inside aether_os_v2::
   useEffect(() => {
     saveAetherState(state);
   }, [state]);
 
-  // Check real Android Health Connect availability on launch (never fakes connected!)
   useEffect(() => {
     HealthConnectManager.checkStatus().then((diag) => {
       setState((prev) => ({
@@ -153,11 +174,15 @@ export default function App() {
     });
   }, []);
 
-  // Optional Demo Preview data is kept strictly in memory — NEVER pollutes real saved records or Lab Vault!
+  // Scroll to top cleanly whenever opening a dedicated page or switching tabs
+  useEffect(() => {
+    window.scrollTo({ top: 0, behavior: 'instant' as ScrollBehavior });
+  }, [activePage, activeTab]);
+
   const demoRecords = useMemo(
     () =>
       state.demoSimulatorEnabled
-        ? generateDemoBiometricHistory(30, state.device.capabilities.overnightHrv === 'active')
+        ? generateDemoBiometricHistory(35, state.device.capabilities.overnightHrv === 'active')
         : [],
     [state.demoSimulatorEnabled, state.device.capabilities.overnightHrv]
   );
@@ -167,24 +192,26 @@ export default function App() {
   const todayStr = getTodayDateStr();
   const today: DailyBiometricRecord | null = useMemo(() => {
     if (activeRecords.length === 0) return null;
-    const exact = activeRecords.find((r) => r.date === todayStr);
-    return exact ?? activeRecords[activeRecords.length - 1];
+    return activeRecords.find((r) => r.date === todayStr) ?? activeRecords[activeRecords.length - 1];
   }, [activeRecords, todayStr]);
 
-  const recovery = useMemo(() => computeAdaptiveRecovery(activeRecords), [activeRecords]);
+  const recovery = useMemo(
+    () => computeAdaptiveRecovery(activeRecords, state.profile),
+    [activeRecords, state.profile]
+  );
   const strain = useMemo(() => computeDailyStrain(today, recovery.score), [today, recovery.score]);
   const sleepPlan = useMemo(
-    () => computeSleepDebtPlan(activeRecords, state.profile.targetWakeTime),
-    [activeRecords, state.profile.targetWakeTime]
+    () => computeSleepDebtPlan(activeRecords, state.profile),
+    [activeRecords, state.profile]
   );
-  const acwr = useMemo(() => computeCardioLoadAcwr(activeRecords), [activeRecords]);
-  const bioAge = useMemo(
-    () => computeBiologicalAge(activeRecords, state.profile, 30),
+  const ewma = useMemo(() => computeUncoupledEwmaWorkload(activeRecords), [activeRecords]);
+  const fitnessAge = useMemo(
+    () => computeFitnessAge(activeRecords, state.profile, 30),
     [activeRecords, state.profile]
   );
   const correlations = useMemo(
-    () => computeHabitCorrelations(activeRecords, state.habitDefinitions),
-    [activeRecords, state.habitDefinitions]
+    () => computeHabitCorrelations(activeRecords, state.habitDefinitions, state.profile),
+    [activeRecords, state.habitDefinitions, state.profile]
   );
 
   const aiContext: BiometricContextBundle = useMemo(
@@ -195,11 +222,11 @@ export default function App() {
       recovery,
       strain,
       sleepPlan,
-      acwr,
-      bioAge,
-      topCorrelations: correlations,
+      ewma,
+      fitnessAge,
+      correlations,
     }),
-    [state.profile, state.device, today, recovery, strain, sleepPlan, acwr, bioAge, correlations]
+    [state.profile, state.device, today, recovery, strain, sleepPlan, ewma, fitnessAge, correlations]
   );
 
   const [briefing, setBriefing] = useState<MorningBriefing>(() =>
@@ -211,16 +238,21 @@ export default function App() {
       setBriefing(generateOfflineMorningBriefing(aiContext));
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [recovery.score, strain.score, sleepPlan.rolling7dDebtMin, state.demoSimulatorEnabled, activeRecords.length]);
+  }, [recovery.score, strain.score, ewma.ratio, state.demoSimulatorEnabled, activeRecords.length]);
+
+  const openLogSection = (sub: LogSubTab) => {
+    setActivePage(null);
+    setLogSubTab(sub);
+    setActiveTab('log');
+  };
 
   const mutateTodayReal = (updater: (rec: DailyBiometricRecord) => DailyBiometricRecord) => {
     setState((prev) => {
       const dateKey = getTodayDateStr();
       const idx = prev.records.findIndex((r) => r.date === dateKey);
       const next = [...prev.records];
-      if (idx >= 0) {
-        next[idx] = updater(next[idx]);
-      } else {
+      if (idx >= 0) next[idx] = updater(next[idx]);
+      else {
         next.push(updater(createEmptyDailyRecord(dateKey, 'manual')));
         next.sort((a, b) => a.date.localeCompare(b.date));
       }
@@ -234,21 +266,29 @@ export default function App() {
     setSyncMessage('');
     try {
       const res = await HealthConnectManager.requestPermissionsAndSync(
-        state.profile.maxHrBpm,
+        getEffectiveMaxHr(state.profile),
         state.records
       );
       setSyncMessage(res.summary);
-      setState((prev) => ({
-        ...prev,
-        demoSimulatorEnabled: res.success ? false : prev.demoSimulatorEnabled,
-        device: {
-          ...prev.device,
-          connected: res.success,
-          lastSyncedIso: res.success ? new Date().toISOString() : prev.device.lastSyncedIso,
-          healthConnect: res.diagnostics,
-        },
-        records: res.success && res.syncedRecords ? res.syncedRecords : prev.records,
-      }));
+      setState((prev) => {
+        const curMax = getEffectiveMaxHr(prev.profile);
+        const updatedObservedMax =
+          res.highestObservedHr && res.highestObservedHr > curMax
+            ? res.highestObservedHr
+            : prev.profile.observedMaxHrBpm;
+        return {
+          ...prev,
+          demoSimulatorEnabled: res.success ? false : prev.demoSimulatorEnabled,
+          profile: { ...prev.profile, observedMaxHrBpm: updatedObservedMax },
+          device: {
+            ...prev.device,
+            connected: res.success,
+            lastSyncedIso: res.success ? new Date().toISOString() : prev.device.lastSyncedIso,
+            healthConnect: res.diagnostics,
+          },
+          records: res.success && res.syncedRecords ? res.syncedRecords : prev.records,
+        };
+      });
     } finally {
       setIsSyncing(false);
     }
@@ -273,17 +313,17 @@ export default function App() {
     }));
   };
 
-  const handleBleTelemetry = (telemetry: BleLiveTelemetry) => {
+  const handleBleTelemetry = (t: BleLiveTelemetry) => {
     setState((prev) => ({
       ...prev,
       device: {
         ...prev.device,
         connected: true,
-        name: telemetry.deviceName,
+        name: t.deviceName,
         transport: 'web_bluetooth_ble',
-        liveBleBpm: telemetry.bpm,
-        liveBleRrMs: telemetry.rrIntervalMs,
-        batteryPct: telemetry.batteryPct ?? prev.device.batteryPct,
+        liveBleBpm: t.bpm,
+        liveBleRrMs: t.rrIntervalMs,
+        batteryPct: t.batteryPct ?? prev.device.batteryPct,
         lastSyncedIso: new Date().toISOString(),
       },
     }));
@@ -300,7 +340,6 @@ export default function App() {
         const awakeMin = row.awakeMin ?? existing.sleep?.stages.awakeMin ?? 0;
         const totalSleepMin = deepMin + remMin + lightMin;
         const timeInBedMin = totalSleepMin + awakeMin;
-
         map.set(row.date, {
           ...existing,
           restingHrBpm: row.restingHrBpm ?? existing.restingHrBpm,
@@ -338,7 +377,7 @@ export default function App() {
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url;
-    a.download = `aether-backup-${getTodayDateStr()}.json`;
+    a.download = `aether-v3-backup-${getTodayDateStr()}.json`;
     a.click();
     URL.revokeObjectURL(url);
   };
@@ -363,17 +402,24 @@ export default function App() {
                 totalSleepMin,
                 timeInBedMin,
                 efficiencyPct: Number(((totalSleepMin / Math.max(1, timeInBedMin)) * 100).toFixed(1)),
-                stages: {
-                  awakeMin: payload.awakeMin,
-                  lightMin,
-                  deepMin: payload.deepMin,
-                  remMin: payload.remMin,
-                },
+                stages: { awakeMin: payload.awakeMin, lightMin, deepMin: payload.deepMin, remMin: payload.remMin },
                 source: 'Manual Entry',
               }
             : rec.sleep,
       };
     });
+  };
+
+  const handleLogWorkout = (workout: WorkoutRecord) => {
+    // Auto-update Observed Peak HR if a genuine higher peak is logged
+    if (workout.maxHrBpm > getEffectiveMaxHr(state.profile) && workout.maxHrBpm <= 220) {
+      setState((prev) => ({ ...prev, profile: { ...prev.profile, observedMaxHrBpm: workout.maxHrBpm } }));
+    }
+    mutateTodayReal((rec) => ({
+      ...rec,
+      workouts: [workout, ...rec.workouts],
+      activeCaloriesKcal: rec.activeCaloriesKcal + workout.activeCaloriesKcal,
+    }));
   };
 
   const handleRefreshBriefing = async () => {
@@ -386,13 +432,13 @@ export default function App() {
   };
 
   const handleAskCoach = async (question: string) => {
-    const userMsg = {
-      id: `u_${Date.now()}`,
-      role: 'user' as const,
-      content: question,
-      timestampIso: new Date().toISOString(),
-    };
-    setState((prev) => ({ ...prev, coachHistory: [...prev.coachHistory, userMsg] }));
+    setState((prev) => ({
+      ...prev,
+      coachHistory: [
+        ...prev.coachHistory,
+        { id: `u_${Date.now()}`, role: 'user', content: question, timestampIso: new Date().toISOString() },
+      ],
+    }));
     const reply = await askAetherCoach(question, aiContext);
     setState((prev) => ({
       ...prev,
@@ -403,21 +449,151 @@ export default function App() {
     }));
   };
 
+  // ========= DEDICATED FULL-SCREEN PAGES (Zero Bottom-Bar Clutter or Overlap!) =========
+  if (activePage === 'recovery') {
+    return (
+      <RecoveryPage
+        today={today}
+        recovery={recovery}
+        onBack={() => setActivePage(null)}
+        onOpenDocs={() => setActivePage('science_docs')}
+        onOpenWellnessLog={() => openLogSection('wellness')}
+        onOpenDevices={() => setActivePage('devices')}
+      />
+    );
+  }
+  if (activePage === 'strain') {
+    return (
+      <StrainPage
+        today={today}
+        profile={state.profile}
+        strain={strain}
+        ewma={ewma}
+        onBack={() => setActivePage(null)}
+        onOpenDocs={() => setActivePage('science_docs')}
+        onOpenTrainingLog={() => openLogSection('training')}
+        onDeleteWorkout={(id) =>
+          mutateTodayReal((rec) => ({ ...rec, workouts: rec.workouts.filter((w) => w.id !== id) }))
+        }
+      />
+    );
+  }
+  if (activePage === 'sleep') {
+    return (
+      <SleepPage
+        today={today}
+        sleepPlan={sleepPlan}
+        onBack={() => setActivePage(null)}
+        onOpenDocs={() => setActivePage('science_docs')}
+        onOpenSettings={() => setActivePage('settings')}
+        onOpenVitalsLog={() => openLogSection('vitals_food')}
+      />
+    );
+  }
+  if (activePage === 'fitness_age') {
+    return (
+      <FitnessAgePage
+        fitnessAge={fitnessAge}
+        profile={state.profile}
+        onUpdateProfile={(patch) => setState((prev) => ({ ...prev, profile: { ...prev.profile, ...patch } }))}
+        onBack={() => setActivePage(null)}
+        onOpenDocs={() => setActivePage('science_docs')}
+      />
+    );
+  }
+  if (activePage === 'habits_lab') {
+    return (
+      <HabitsLabPage
+        correlations={correlations}
+        onBack={() => setActivePage(null)}
+        onOpenDocs={() => setActivePage('science_docs')}
+        onOpenHabitLog={() => openLogSection('habits')}
+      />
+    );
+  }
+  if (activePage === 'trends') {
+    return (
+      <TrendsPage
+        records={activeRecords}
+        profile={state.profile}
+        onBack={() => setActivePage(null)}
+        onOpenDocs={() => setActivePage('science_docs')}
+        onOpenDevices={() => setActivePage('devices')}
+      />
+    );
+  }
+  if (activePage === 'devices') {
+    return (
+      <DevicesPage
+        device={state.device}
+        isSyncing={isSyncing}
+        syncStatusMessage={syncMessage}
+        onSelectWearable={handleSelectWearable}
+        onSyncHealthConnect={handleSyncHealthConnect}
+        onUpdateBleTelemetry={handleBleTelemetry}
+        onImportRows={handleImportRows}
+        onExportBackup={handleExportBackup}
+        onBack={() => setActivePage(null)}
+        onOpenDocs={() => setActivePage('science_docs')}
+      />
+    );
+  }
+  if (activePage === 'lab_vault') {
+    return (
+      <LabVaultPage
+        biomarkers={activeBiomarkers}
+        isDemoMode={state.demoSimulatorEnabled}
+        onAddBiomarker={(m: LabBiomarker) =>
+          setState((prev) => ({ ...prev, labBiomarkers: [m, ...prev.labBiomarkers] }))
+        }
+        onDeleteBiomarker={(id: string) =>
+          setState((prev) => ({ ...prev, labBiomarkers: prev.labBiomarkers.filter((b) => b.id !== id) }))
+        }
+        onBack={() => setActivePage(null)}
+        onOpenDocs={() => setActivePage('science_docs')}
+      />
+    );
+  }
+  if (activePage === 'settings') {
+    return (
+      <SettingsPage
+        profile={state.profile}
+        demoSimulatorEnabled={state.demoSimulatorEnabled}
+        onUpdateProfile={(patch: Partial<UserProfile>) =>
+          setState((prev) => ({ ...prev, profile: { ...prev.profile, ...patch } }))
+        }
+        onToggleDemo={(enabled) => setState((prev) => ({ ...prev, demoSimulatorEnabled: enabled }))}
+        onResetAllData={() => {
+          clearAetherState();
+          setState(createCleanInitialState());
+          setSyncMessage('All local data cleared.');
+        }}
+        onBack={() => setActivePage(null)}
+      />
+    );
+  }
+  if (activePage === 'science_docs') {
+    return <ScienceDocsPage onBack={() => setActivePage(null)} />;
+  }
+
+  // ========= MAIN 4-TAB SHELL (Clean, Minimal, Zero Clutter) =========
   const statusText = state.demoSimulatorEnabled
-    ? 'DEMO MODE • Viewing Sample Data'
+    ? 'DEMO PREVIEW · Viewing Sample Data'
     : state.device.connected
-      ? `${state.device.name} • ${formatSyncAgo(state.device.lastSyncedIso)}`
-      : 'No Wearable Connected • Tap to Connect Health Connect';
+      ? `${state.device.name} · ${formatSyncAgo(state.device.lastSyncedIso)}`
+      : 'No Watch Connected · Tap to Connect';
+
+  const unlockedHabitsCount = correlations.filter((c) => c.unlocked).length;
 
   return (
     <div className="min-h-screen bg-[#07090D] text-slate-100">
-      <div className="pointer-events-none fixed inset-x-0 top-0 h-56 bg-gradient-to-b from-emerald-500/[0.06] via-cyan-500/[0.02] to-transparent" />
+      <div className="pointer-events-none fixed inset-x-0 top-0 h-52 bg-gradient-to-b from-emerald-500/[0.05] via-cyan-500/[0.02] to-transparent" />
 
-      <div className="relative mx-auto flex min-h-screen w-full max-w-[440px] flex-col px-4 pb-28 pt-4">
-        {/* Top Header & 100% Honest Connection Status Pill */}
-        <header className="mb-4 space-y-3">
+      <div className="relative mx-auto flex min-h-screen w-full max-w-[460px] flex-col px-4 pb-28 safe-top">
+        {/* Minimal Brand Header + Honest Connection Status Pill */}
+        <header className="mb-5 pt-2 space-y-3">
           <div className="flex items-center justify-between px-0.5">
-            <div className="flex items-center gap-2">
+            <div className="flex items-center gap-2.5">
               <div className="flex h-7 w-7 items-center justify-center rounded-xl border border-emerald-400/30 bg-emerald-500/10">
                 <div className="h-2.5 w-2.5 rounded-full bg-emerald-400 shadow-emeraldGlow" />
               </div>
@@ -430,8 +606,8 @@ export default function App() {
 
           <button
             type="button"
-            onClick={() => (state.device.connected ? handleSyncHealthConnect() : setActiveTab('devices'))}
-            className={`aether-glass flex w-full items-center justify-between rounded-full px-4 py-2.5 text-left transition active:scale-[0.99] ${
+            onClick={() => (state.device.connected ? handleSyncHealthConnect() : setActivePage('devices'))}
+            className={`aether-card flex w-full items-center justify-between rounded-full px-4 py-2.5 text-left transition active:scale-[0.99] ${
               state.demoSimulatorEnabled
                 ? 'border-amber-400/40 bg-amber-500/10'
                 : state.device.connected
@@ -454,21 +630,23 @@ export default function App() {
             </div>
 
             <div className="ml-2 flex shrink-0 items-center gap-2 text-slate-400">
-              {/* Battery % is ONLY shown if a real BLE sensor reports 0x180F battery! */}
               {state.device.connected && state.device.batteryPct !== null && (
                 <span className="tabular-mono inline-flex items-center gap-1 text-xs text-emerald-300">
                   <BatteryMedium className="h-3.5 w-3.5" />
                   {state.device.batteryPct}%
                 </span>
               )}
-              {state.device.connected && (
+              {state.device.connected ? (
                 <RefreshCw className={`h-3.5 w-3.5 ${isSyncing ? 'animate-spin text-emerald-400' : ''}`} />
+              ) : (
+                <ChevronRight className="h-4 w-4 text-slate-500" />
               )}
             </div>
           </button>
         </header>
 
-        <main className="flex-1 space-y-5">
+        <main className="animate-page flex-1 space-y-4">
+          {/* TAB 1: TODAY — Clean, Spacious, Interactive Command Center */}
           {activeTab === 'today' && (
             <>
               <RadialGauges
@@ -476,20 +654,114 @@ export default function App() {
                 strain={strain}
                 sleepPlan={sleepPlan}
                 hasAnyData={activeRecords.length > 0}
-                onSelectMetric={setDrilldownMetric}
+                onOpenPage={setActivePage}
               />
 
-              <DetailedFeatureSections
-                today={today}
-                recovery={recovery}
-                strain={strain}
-                sleepPlan={sleepPlan}
-                acwr={acwr}
-                bioAge={bioAge}
-                onSelectMetric={setDrilldownMetric}
-                onGoToVault={() => setActiveTab('devices')}
-                onGoToLog={() => setActiveTab('log')}
-              />
+              {/* Perception Override Alert if triggered */}
+              {recovery.perceptionOverrideActive && recovery.perceptionOverrideReason && (
+                <button
+                  type="button"
+                  onClick={() => setActivePage('recovery')}
+                  className="flex w-full items-start gap-3 rounded-3xl border border-amber-400/40 bg-amber-500/10 p-4 text-left"
+                >
+                  <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-amber-400" />
+                  <div className="min-w-0 flex-1">
+                    <p className="text-xs font-bold text-amber-300">Perception Override Active</p>
+                    <p className="mt-0.5 text-xs leading-relaxed text-amber-100/90 line-clamp-2">
+                      {recovery.perceptionOverrideReason}
+                    </p>
+                  </div>
+                  <ChevronRight className="mt-0.5 h-4 w-4 shrink-0 text-amber-300" />
+                </button>
+              )}
+
+              {/* 15-Second Morning Hooper Wellness Banner */}
+              <button
+                type="button"
+                onClick={() => openLogSection('wellness')}
+                className="aether-card flex w-full items-center justify-between gap-3 rounded-3xl px-4 py-3.5 text-left transition hover:border-emerald-400/35 active:scale-[0.99]"
+              >
+                <div className="flex items-center gap-3">
+                  <div className="flex h-10 w-10 items-center justify-center rounded-2xl bg-emerald-500/15 text-emerald-400">
+                    <HeartHandshake className="h-5 w-5" />
+                  </div>
+                  <div>
+                    <p className="text-xs font-semibold text-white">
+                      {today?.wellness ? 'Morning Wellness Checked In' : '15-Second Morning Check-In'}
+                    </p>
+                    <p className="text-[11px] text-slate-400">
+                      {today?.wellness
+                        ? `Score ${today.wellness.wellnessScore}/100 · Soreness ${today.wellness.soreness}/7 · Stress ${today.wellness.stress}/7`
+                        : 'Log Sleep Quality, Energy, Stress & Soreness'}
+                    </p>
+                  </div>
+                </div>
+                <ChevronRight className="h-4 w-4 shrink-0 text-slate-500" />
+              </button>
+
+              {/* Clean Section Directory List (Each row opens its own dedicated page!) */}
+              <section className="aether-card divide-y divide-white/[0.06] overflow-hidden rounded-3xl">
+                {(
+                  [
+                    {
+                      page: 'recovery' as const,
+                      icon: HeartPulse,
+                      iconCls: 'bg-emerald-500/15 text-emerald-400',
+                      title: 'Recovery & RHR Z-Score',
+                      sub: recovery.swcLabel,
+                      val: today?.restingHrBpm ? `${today.restingHrBpm} bpm` : '--',
+                    },
+                    {
+                      page: 'strain' as const,
+                      icon: Gauge,
+                      iconCls: 'bg-cyan-500/15 text-cyan-400',
+                      title: 'Dual Strain & EWMA Load',
+                      sub: `Cardio ${strain.cardioScore} · Muscular ${strain.muscularScore} · ${ewma.statusLabel}`,
+                      val: ewma.ratio !== null ? `${ewma.ratio}` : `${strain.score.toFixed(1)}`,
+                    },
+                    {
+                      page: 'sleep' as const,
+                      icon: Moon,
+                      iconCls: 'bg-indigo-500/15 text-indigo-400',
+                      title: 'Sleep & 7-Day Regularity',
+                      sub: `Bedtime ${sleepPlan.recommendedBedtime} · Need ${formatMinutesToHm(sleepPlan.personalBaselineNeedMin)}`,
+                      val: sleepPlan.regularityScorePct !== null ? `${sleepPlan.regularityScorePct}%` : '--',
+                    },
+                    {
+                      page: 'fitness_age' as const,
+                      icon: Award,
+                      iconCls: 'bg-amber-500/15 text-amber-400',
+                      title: 'Cardio & Sleep Fitness Age',
+                      sub: fitnessAge.vo2MaxUsed ? `VO2 Max ${fitnessAge.vo2MaxUsed} mL/kg/min` : 'Calibrate via 12-min / 5K run',
+                      val: fitnessAge.fitnessAge !== null ? `${fitnessAge.fitnessAge}y` : '--',
+                    },
+                  ] as const
+                ).map((row) => {
+                  const Icon = row.icon;
+                  return (
+                    <button
+                      key={row.page}
+                      type="button"
+                      onClick={() => setActivePage(row.page)}
+                      className="flex w-full items-center justify-between gap-3 px-4 py-3.5 text-left transition hover:bg-white/[0.03] active:bg-white/[0.05]"
+                    >
+                      <div className="flex min-w-0 items-center gap-3">
+                        <div className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-xl ${row.iconCls}`}>
+                          <Icon className="h-4 w-4" />
+                        </div>
+                        <div className="min-w-0">
+                          <p className="text-xs font-semibold text-white">{row.title}</p>
+                          <p className="truncate text-[11px] text-slate-400">{row.sub}</p>
+                        </div>
+                      </div>
+                      <div className="flex shrink-0 items-center gap-1.5">
+                        <span className="tabular-mono text-xs font-bold text-slate-100">{row.val}</span>
+                        <ChevronRight className="h-4 w-4 text-slate-500" />
+                      </div>
+                    </button>
+                  );
+                })}
+              </section>
 
               <AICoachDrawer
                 briefing={briefing}
@@ -499,44 +771,124 @@ export default function App() {
                 onSendQuestion={handleAskCoach}
                 hasGeminiKey={Boolean(state.profile.geminiApiKey.trim())}
               />
-
-              <TimelineFeed
-                today={today}
-                habitDefinitions={state.habitDefinitions}
-                dailyWaterGoalMl={state.profile.dailyWaterGoalMl}
-                onDeleteWorkout={(id) =>
-                  mutateTodayReal((rec) => ({
-                    ...rec,
-                    workouts: rec.workouts.filter((w) => w.id !== id),
-                  }))
-                }
-                onDeleteMeal={(id) =>
-                  mutateTodayReal((rec) => ({
-                    ...rec,
-                    meals: rec.meals.filter((m) => m.id !== id),
-                  }))
-                }
-                onGoToLog={() => setActiveTab('log')}
-              />
             </>
           )}
 
+          {/* TAB 2: BIOLOGY — Clean 2-Column Dedicated Page Directory */}
           {activeTab === 'biology' && (
-            <div className="space-y-5">
-              <ScrubbableCharts
-                records={activeRecords}
-                profile={state.profile}
-                onGoToVault={() => setActiveTab('devices')}
-              />
-              <HabitCorrelations correlations={correlations} />
+            <div className="space-y-4">
+              <div>
+                <h1 className="text-lg font-bold tracking-tight text-white">Biology Hub</h1>
+                <p className="text-xs text-slate-400">Tap any module to open its dedicated full-screen page</p>
+              </div>
+
+              <div className="grid grid-cols-2 gap-3">
+                {(
+                  [
+                    {
+                      page: 'recovery' as const,
+                      icon: HeartPulse,
+                      accent: 'text-emerald-400 bg-emerald-500/15',
+                      title: 'Recovery & SWC',
+                      val: recovery.score !== null ? `${recovery.score}%` : '--',
+                      sub: recovery.rhrZScore !== null ? `RHR ${recovery.rhrZScore >= 0 ? '+' : ''}${recovery.rhrZScore}σ` : 'Z-Score band',
+                    },
+                    {
+                      page: 'strain' as const,
+                      icon: Activity,
+                      accent: 'text-cyan-400 bg-cyan-500/15',
+                      title: 'EWMA & Strain',
+                      val: ewma.ratio !== null ? `${ewma.ratio}` : `${strain.score.toFixed(1)}`,
+                      sub: ewma.monotonyAlert ? 'Monotony >2.0' : ewma.statusLabel,
+                    },
+                    {
+                      page: 'sleep' as const,
+                      icon: Moon,
+                      accent: 'text-indigo-400 bg-indigo-500/15',
+                      title: 'Sleep Regularity',
+                      val: sleepPlan.regularityScorePct !== null ? `${sleepPlan.regularityScorePct}%` : '--',
+                      sub: `Bed ${sleepPlan.recommendedBedtime}`,
+                    },
+                    {
+                      page: 'fitness_age' as const,
+                      icon: Award,
+                      accent: 'text-amber-400 bg-amber-500/15',
+                      title: 'Fitness Age',
+                      val: fitnessAge.fitnessAge !== null ? `${fitnessAge.fitnessAge}y` : '--',
+                      sub: fitnessAge.vo2MaxUsed ? `VO2 ${fitnessAge.vo2MaxUsed}` : 'Run calibrator',
+                    },
+                    {
+                      page: 'habits_lab' as const,
+                      icon: Sparkles,
+                      accent: 'text-emerald-400 bg-emerald-500/15',
+                      title: 'Habit Impact Lab',
+                      val: `${unlockedHabitsCount}`,
+                      sub: `Unlocked (95% CI)`,
+                    },
+                    {
+                      page: 'trends' as const,
+                      icon: BarChart3,
+                      accent: 'text-cyan-400 bg-cyan-500/15',
+                      title: 'Trend Graphs',
+                      val: `${activeRecords.length}d`,
+                      sub: '7D · 30D · 90D',
+                    },
+                  ] as const
+                ).map((card) => {
+                  const Icon = card.icon;
+                  return (
+                    <button
+                      key={card.page}
+                      type="button"
+                      onClick={() => setActivePage(card.page)}
+                      className="aether-card flex flex-col justify-between rounded-3xl p-4 text-left transition hover:border-white/20 active:scale-[0.97]"
+                    >
+                      <div className="flex items-center justify-between">
+                        <div className={`flex h-9 w-9 items-center justify-center rounded-xl ${card.accent}`}>
+                          <Icon className="h-4 w-4" />
+                        </div>
+                        <ChevronRight className="h-4 w-4 text-slate-600" />
+                      </div>
+                      <div className="mt-4">
+                        <p className="text-xs font-semibold text-slate-200">{card.title}</p>
+                        <p className="tabular-mono mt-1 text-2xl font-bold text-white">{card.val}</p>
+                        <p className="mt-0.5 truncate text-[11px] text-slate-400">{card.sub}</p>
+                      </div>
+                    </button>
+                  );
+                })}
+              </div>
+
+              <button
+                type="button"
+                onClick={() => setActivePage('science_docs')}
+                className="aether-card flex w-full items-center justify-between rounded-3xl p-4 text-left transition hover:border-emerald-400/35"
+              >
+                <div className="flex items-center gap-3">
+                  <div className="flex h-10 w-10 items-center justify-center rounded-2xl bg-emerald-500/15 text-emerald-400">
+                    <BookOpen className="h-5 w-5" />
+                  </div>
+                  <div>
+                    <p className="text-xs font-semibold text-white">How Every Metric Is Calculated</p>
+                    <p className="text-[11px] text-slate-400">Read the plain-English science & methods guide</p>
+                  </div>
+                </div>
+                <ChevronRight className="h-4 w-4 text-slate-500" />
+              </button>
             </div>
           )}
 
+          {/* TAB 3: LOG — Clean 4-Section Action Hub */}
           {activeTab === 'log' && (
             <QuickLogHub
+              key={logSubTab}
+              initialSubTab={logSubTab}
               today={today}
               profile={state.profile}
               habitDefinitions={state.habitDefinitions}
+              onSaveWellness={(log: HooperWellnessLog) =>
+                mutateTodayReal((rec) => ({ ...rec, wellness: log }))
+              }
               onToggleHabit={(habitId) =>
                 mutateTodayReal((rec) => ({
                   ...rec,
@@ -551,23 +903,14 @@ export default function App() {
                   ...prev,
                   habitDefinitions: [
                     ...prev.habitDefinitions,
-                    { id, label, category, icon: 'Sparkles', expectedDirection: 'neutral' },
+                    { id, label, category, expectedDirection: 'neutral' },
                   ],
                 }));
                 mutateTodayReal((rec) => ({ ...rec, habitsLogged: [...rec.habitsLogged, id] }));
               }}
-              onLogWorkout={(workout) =>
-                mutateTodayReal((rec) => ({
-                  ...rec,
-                  workouts: [workout, ...rec.workouts],
-                  activeCaloriesKcal: rec.activeCaloriesKcal + workout.activeCaloriesKcal,
-                }))
-              }
-              onLogMeal={(meal) =>
-                mutateTodayReal((rec) => ({
-                  ...rec,
-                  meals: [meal, ...rec.meals],
-                }))
+              onLogWorkout={handleLogWorkout}
+              onLogMeal={(meal: MealRecord) =>
+                mutateTodayReal((rec) => ({ ...rec, meals: [meal, ...rec.meals] }))
               }
               onAddWater={(ml) =>
                 mutateTodayReal((rec) => ({
@@ -589,65 +932,121 @@ export default function App() {
             />
           )}
 
-          {activeTab === 'devices' && (
-            <div className="space-y-5">
-              <DeviceSyncWizard
-                device={state.device}
-                profile={state.profile}
-                demoSimulatorEnabled={state.demoSimulatorEnabled}
-                isSyncing={isSyncing}
-                syncStatusMessage={syncMessage}
-                onSelectWearable={handleSelectWearable}
-                onSyncHealthConnect={handleSyncHealthConnect}
-                onToggleDemoSimulator={(enabled) =>
-                  setState((prev) => ({ ...prev, demoSimulatorEnabled: enabled }))
-                }
-                onUpdateBleTelemetry={handleBleTelemetry}
-                onImportRows={handleImportRows}
-                onExportBackup={handleExportBackup}
-                onUpdateProfile={(patch: Partial<UserProfile>) =>
-                  setState((prev) => ({ ...prev, profile: { ...prev.profile, ...patch } }))
-                }
-                onResetAllData={() => {
-                  clearAetherState();
-                  setState(createCleanInitialState());
-                  setSyncMessage('All local data cleared.');
-                }}
-              />
+          {/* TAB 4: SYSTEM — Clean Apple/Oura-Style Grouped Menu (Zero Cramped Dumped Settings!) */}
+          {activeTab === 'system' && (
+            <div className="space-y-4">
+              <div>
+                <h1 className="text-lg font-bold tracking-tight text-white">System & Vault</h1>
+                <p className="text-xs text-slate-400">Devices, offline blood labs, calibration & documentation</p>
+              </div>
 
-              <LabVault
-                biomarkers={activeBiomarkers}
-                isDemoMode={state.demoSimulatorEnabled}
-                onAddBiomarker={(marker: LabBiomarker) =>
-                  setState((prev) => ({
-                    ...prev,
-                    labBiomarkers: [marker, ...prev.labBiomarkers],
-                  }))
-                }
-                onDeleteBiomarker={(id: string) =>
-                  setState((prev) => ({
-                    ...prev,
-                    labBiomarkers: prev.labBiomarkers.filter((b) => b.id !== id),
-                  }))
-                }
-              />
+              <section className="aether-card divide-y divide-white/[0.06] overflow-hidden rounded-3xl">
+                {(
+                  [
+                    {
+                      page: 'devices' as const,
+                      icon: Watch,
+                      iconCls: 'bg-emerald-500/15 text-emerald-400',
+                      title: 'Watch & Health Connect',
+                      sub: `${state.device.name} · SDK 1.1.0 Bridge`,
+                      badge: state.device.connected ? 'Connected' : 'Setup',
+                    },
+                    {
+                      page: 'lab_vault' as const,
+                      icon: FlaskConical,
+                      iconCls: 'bg-indigo-500/15 text-indigo-400',
+                      title: 'Offline Medical & Lab Vault',
+                      sub: 'Blood biomarkers & optimal athletic ranges',
+                      badge: `${activeBiomarkers.length} labs`,
+                    },
+                    {
+                      page: 'settings' as const,
+                      icon: SlidersHorizontal,
+                      iconCls: 'bg-cyan-500/15 text-cyan-400',
+                      title: 'Profile & Calibration',
+                      sub: `Max HR ${getEffectiveMaxHr(state.profile)} · Sleep Need ${formatMinutesToHm(state.profile.personalSleepNeedMin)}`,
+                      badge: 'Edit',
+                    },
+                    {
+                      page: 'science_docs' as const,
+                      icon: BookOpen,
+                      iconCls: 'bg-amber-500/15 text-amber-400',
+                      title: 'Science & Methodology Guide',
+                      sub: 'Plain-English docs for every score & graph',
+                      badge: '9 Chapters',
+                    },
+                  ] as const
+                ).map((item) => {
+                  const Icon = item.icon;
+                  return (
+                    <button
+                      key={item.page}
+                      type="button"
+                      onClick={() => setActivePage(item.page)}
+                      className="flex w-full items-center justify-between gap-3 px-4 py-4 text-left transition hover:bg-white/[0.03]"
+                    >
+                      <div className="flex min-w-0 items-center gap-3">
+                        <div className={`flex h-10 w-10 shrink-0 items-center justify-center rounded-2xl ${item.iconCls}`}>
+                          <Icon className="h-5 w-5" />
+                        </div>
+                        <div className="min-w-0">
+                          <p className="text-sm font-semibold text-white">{item.title}</p>
+                          <p className="truncate text-xs text-slate-400">{item.sub}</p>
+                        </div>
+                      </div>
+                      <div className="flex shrink-0 items-center gap-1.5">
+                        <span className="tabular-mono rounded-full border border-white/10 bg-white/[0.04] px-2.5 py-0.5 text-[10px] font-semibold text-slate-300">
+                          {item.badge}
+                        </span>
+                        <ChevronRight className="h-4 w-4 text-slate-500" />
+                      </div>
+                    </button>
+                  );
+                })}
+              </section>
+
+              {/* Compact Demo Preview Switch Card */}
+              <div className="aether-card flex items-center justify-between rounded-3xl px-4 py-3.5">
+                <div className="pr-3">
+                  <p className="text-xs font-semibold text-amber-200">Preview Demo Data</p>
+                  <p className="text-[11px] text-slate-400">
+                    Off by default · Safe in-memory preview of all charts
+                  </p>
+                </div>
+                <button
+                  type="button"
+                  onClick={() =>
+                    setState((prev) => ({ ...prev, demoSimulatorEnabled: !prev.demoSimulatorEnabled }))
+                  }
+                  className={`relative h-6 w-11 shrink-0 rounded-full transition ${
+                    state.demoSimulatorEnabled ? 'bg-amber-400' : 'bg-slate-700'
+                  }`}
+                  aria-label="Toggle Demo Preview"
+                >
+                  <span
+                    className={`absolute top-0.5 h-5 w-5 rounded-full bg-white transition ${
+                      state.demoSimulatorEnabled ? 'left-5' : 'left-0.5'
+                    }`}
+                  />
+                </button>
+              </div>
             </div>
           )}
         </main>
       </div>
 
-      {/* Strict 4-Tab Floating Glass Bottom Bar */}
+      {/* Strict 4-Tab Floating Glass Bottom Bar (Only shown on top-level tabs — never overlaps dedicated pages!) */}
       <nav
         aria-label="Primary Navigation"
-        className="fixed bottom-4 left-1/2 z-40 w-[calc(100%-2rem)] max-w-[408px] -translate-x-1/2"
+        className="fixed bottom-4 left-1/2 z-40 w-[calc(100%-2rem)] max-w-[420px] -translate-x-1/2"
       >
         <div className="aether-glass-elevated grid grid-cols-4 items-center rounded-full p-1.5 shadow-glass">
           {(
             [
               { id: 'today', label: 'Today', icon: Compass },
               { id: 'biology', label: 'Biology', icon: TrendingUp },
-              { id: 'log', label: '+ Log', icon: Plus },
-              { id: 'devices', label: 'Vault', icon: Shield },
+              { id: 'log', label: 'Log', icon: Plus },
+              { id: 'system', label: 'System', icon: Settings },
             ] as const
           ).map((item) => {
             const Icon = item.icon;
@@ -673,17 +1072,6 @@ export default function App() {
           })}
         </div>
       </nav>
-
-      <MetricDrilldownSheet
-        metric={drilldownMetric}
-        onClose={() => setDrilldownMetric(null)}
-        today={today}
-        recovery={recovery}
-        strain={strain}
-        sleepPlan={sleepPlan}
-        acwr={acwr}
-        bioAge={bioAge}
-      />
     </div>
   );
 }

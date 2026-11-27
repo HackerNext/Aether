@@ -13,8 +13,8 @@ interface AICoachDrawerProps {
 
 const QUICK_PROMPTS = [
   'How hard should I train today?',
+  'Explain my EWMA & Monotony',
   'When should I sleep tonight?',
-  'Explain my recovery score',
 ];
 
 export const AICoachDrawer: React.FC<AICoachDrawerProps> = ({
@@ -43,18 +43,18 @@ export const AICoachDrawer: React.FC<AICoachDrawerProps> = ({
 
   return (
     <>
-      <section className="aether-glass relative overflow-hidden rounded-3xl p-4 shadow-glass">
-        <div className="pointer-events-none absolute -right-12 -top-12 h-32 w-32 rounded-full bg-emerald-500/10 blur-2xl" />
-
-        <div className="mb-3 flex items-center justify-between">
+      <section className="aether-card rounded-3xl p-4 space-y-3">
+        <div className="flex items-center justify-between">
           <div className="flex items-center gap-2.5">
-            <div className="flex h-9 w-9 items-center justify-center rounded-2xl bg-emerald-500/15 text-emerald-400">
+            <div className="flex h-8 w-8 items-center justify-center rounded-xl bg-emerald-500/15 text-emerald-400">
               <Sparkles className="h-4 w-4" />
             </div>
             <div>
-              <h3 className="text-sm font-semibold text-white">Aether AI Morning Briefing</h3>
-              <p className="text-[11px] text-slate-400">
-                {briefing.generatedBy === 'gemini' ? 'Gemini 2.5 Flash Live' : 'Local Biometric Reasoning Engine'}
+              <h3 className="text-xs font-semibold uppercase tracking-[0.12em] text-emerald-400">
+                Aether Coach Briefing
+              </h3>
+              <p className="text-[10px] text-slate-500">
+                {briefing.generatedBy === 'gemini' ? 'Gemini 2.5 Flash' : 'Local Biometric Engine'}
               </p>
             </div>
           </div>
@@ -63,23 +63,25 @@ export const AICoachDrawer: React.FC<AICoachDrawerProps> = ({
             type="button"
             onClick={onRefreshBriefing}
             disabled={isRefreshingBriefing}
-            className="rounded-xl border border-white/10 bg-white/[0.04] p-2 text-slate-400 hover:text-white disabled:opacity-50"
-            aria-label="Refresh AI briefing"
+            className="rounded-xl border border-white/10 bg-white/[0.04] p-2 text-slate-400 hover:text-white"
+            aria-label="Refresh briefing"
           >
-            <RefreshCw className={`h-4 w-4 ${isRefreshingBriefing ? 'animate-spin text-emerald-400' : ''}`} />
+            <RefreshCw className={`h-3.5 w-3.5 ${isRefreshingBriefing ? 'animate-spin text-emerald-400' : ''}`} />
           </button>
         </div>
 
-        <p className="text-sm font-semibold text-emerald-300">{briefing.headline}</p>
-        <p className="mt-1.5 text-xs leading-relaxed text-slate-300">{briefing.summary}</p>
+        <div>
+          <p className="text-sm font-semibold text-white">{briefing.headline}</p>
+          <p className="mt-1 text-xs leading-relaxed text-slate-300">{briefing.summary}</p>
+        </div>
 
-        <ul className="mt-3.5 space-y-2">
+        <ul className="space-y-2">
           {briefing.actionItems.map((item, idx) => (
             <li
               key={idx}
-              className="flex items-start gap-2.5 rounded-2xl border border-white/[0.06] bg-white/[0.025] px-3.5 py-2.5 text-xs text-slate-200"
+              className="flex items-start gap-2.5 rounded-2xl border border-white/[0.05] bg-[#080B10] px-3 py-2.5 text-xs text-slate-200"
             >
-              <CheckCircle2 className="mt-0.5 h-4 w-4 shrink-0 text-emerald-400" />
+              <CheckCircle2 className="mt-0.5 h-3.5 w-3.5 shrink-0 text-emerald-400" />
               <span className="leading-relaxed">{item}</span>
             </li>
           ))}
@@ -88,31 +90,31 @@ export const AICoachDrawer: React.FC<AICoachDrawerProps> = ({
         <button
           type="button"
           onClick={() => setDrawerOpen(true)}
-          className="mt-4 flex w-full items-center justify-center gap-2 rounded-2xl border border-emerald-500/35 bg-emerald-500/15 py-3 text-xs font-semibold text-emerald-200 transition hover:bg-emerald-500/25"
+          className="flex w-full items-center justify-center gap-2 rounded-2xl border border-emerald-500/30 bg-emerald-500/10 py-2.5 text-xs font-semibold text-emerald-300 transition hover:bg-emerald-500/20"
         >
-          <MessageSquare className="h-4 w-4" />
+          <MessageSquare className="h-3.5 w-3.5" />
           <span>Ask Aether Coach</span>
         </button>
       </section>
 
       {drawerOpen && (
         <div
-          className="fixed inset-0 z-50 flex items-end justify-center bg-black/75 backdrop-blur-sm sm:items-center sm:p-4"
+          className="fixed inset-0 z-50 flex items-end justify-center bg-black/80 backdrop-blur-sm sm:items-center sm:p-4"
           onClick={() => setDrawerOpen(false)}
         >
           <div
-            className="aether-glass-elevated flex h-[82vh] w-full max-w-md flex-col rounded-t-3xl shadow-glass sm:rounded-3xl"
+            className="aether-glass-elevated flex h-[82vh] w-full max-w-md flex-col rounded-t-3xl safe-bottom sm:rounded-3xl"
             onClick={(e) => e.stopPropagation()}
           >
             <div className="flex items-center justify-between border-b border-white/[0.08] px-5 py-4">
               <div className="flex items-center gap-2.5">
-                <div className="flex h-9 w-9 items-center justify-center rounded-2xl bg-emerald-500/15 text-emerald-400">
+                <div className="flex h-8 w-8 items-center justify-center rounded-xl bg-emerald-500/15 text-emerald-400">
                   <Sparkles className="h-4 w-4" />
                 </div>
                 <div>
                   <h3 className="text-sm font-semibold text-white">Aether Coach</h3>
                   <p className="text-[11px] text-slate-400">
-                    {hasGeminiKey ? 'Gemini Live • Synced Telemetry' : 'Offline Engine • Synced Telemetry'}
+                    {hasGeminiKey ? 'Gemini Live · Real Telemetry' : 'Offline Engine · Real Telemetry'}
                   </p>
                 </div>
               </div>
@@ -155,7 +157,7 @@ export const AICoachDrawer: React.FC<AICoachDrawerProps> = ({
                     key={prompt}
                     type="button"
                     onClick={() => handleSubmit(prompt)}
-                    className="shrink-0 rounded-full border border-white/10 bg-white/[0.05] px-3 py-1.5 text-[11px] text-slate-300 hover:border-emerald-400/40 hover:text-white"
+                    className="shrink-0 rounded-full border border-white/10 bg-white/[0.05] px-3 py-1.5 text-[11px] text-slate-300"
                   >
                     {prompt}
                   </button>
@@ -172,7 +174,7 @@ export const AICoachDrawer: React.FC<AICoachDrawerProps> = ({
                   type="text"
                   value={input}
                   onChange={(e) => setInput(e.target.value)}
-                  placeholder="Ask about Recovery, Strain, Sleep…"
+                  placeholder="Ask about Z-scores, EWMA, sleep, training…"
                   className="flex-1 rounded-2xl border border-white/10 bg-[#080B10] px-4 py-2.5 text-xs text-white placeholder-slate-500 focus:border-emerald-400/50 focus:outline-none"
                 />
                 <button

@@ -2,20 +2,26 @@ import React, { useState } from 'react';
 import { FlaskConical, Plus, Trash2, X } from 'lucide-react';
 import { LabBiomarker } from '../types/health';
 import { LAB_BIOMARKER_TEMPLATES } from '../services/healthConnectBridge';
+import { PageShell } from '../components/PageShell';
 
-interface LabVaultProps {
+interface LabVaultPageProps {
   biomarkers: LabBiomarker[];
   isDemoMode: boolean;
   onAddBiomarker: (marker: LabBiomarker) => void;
   onDeleteBiomarker: (id: string) => void;
+  onBack: () => void;
+  onOpenDocs: () => void;
 }
 
-export const LabVault: React.FC<LabVaultProps> = ({
+export const LabVaultPage: React.FC<LabVaultPageProps> = ({
   biomarkers,
   isDemoMode,
   onAddBiomarker,
   onDeleteBiomarker,
+  onBack,
+  onOpenDocs,
 }) => {
+  const [filter, setFilter] = useState<'all' | LabBiomarker['category']>('all');
   const [modalOpen, setModalOpen] = useState(false);
   const [name, setName] = useState('');
   const [category, setCategory] = useState<LabBiomarker['category']>('vitamins');
@@ -28,7 +34,7 @@ export const LabVault: React.FC<LabVaultProps> = ({
   const [testedDate, setTestedDate] = useState(new Date().toISOString().slice(0, 10));
   const [notes, setNotes] = useState('');
 
-  const openWithTemplate = (tpl?: (typeof LAB_BIOMARKER_TEMPLATES)[number]) => {
+  const openModal = (tpl?: (typeof LAB_BIOMARKER_TEMPLATES)[number]) => {
     if (tpl) {
       setName(tpl.name);
       setCategory(tpl.category);
@@ -37,13 +43,11 @@ export const LabVault: React.FC<LabVaultProps> = ({
       setOptimalMax(tpl.optimalMax);
       setNormalMin(tpl.normalMin);
       setNormalMax(tpl.normalMax);
-      setValue('');
-      setNotes('');
     } else {
       setName('');
-      setValue('');
-      setNotes('');
     }
+    setValue('');
+    setNotes('');
     setModalOpen(true);
   };
 
@@ -66,74 +70,91 @@ export const LabVault: React.FC<LabVaultProps> = ({
     setModalOpen(false);
   };
 
+  const visible = filter === 'all' ? biomarkers : biomarkers.filter((b) => b.category === filter);
+
   return (
-    <section className="aether-glass space-y-3.5 rounded-3xl p-4 shadow-glass">
+    <PageShell
+      title="Medical & Lab Vault"
+      subtitle={isDemoMode ? 'Preview Demo Samples' : `${biomarkers.length} saved on device`}
+      onBack={onBack}
+      onOpenDocs={onOpenDocs}
+    >
       <div className="flex items-center justify-between gap-2">
-        <div className="flex items-center gap-2.5">
-          <div className="flex h-9 w-9 items-center justify-center rounded-2xl bg-indigo-500/15 text-indigo-400">
-            <FlaskConical className="h-4 w-4" />
-          </div>
-          <div>
-            <h3 className="text-sm font-semibold text-white">Offline Medical & Lab Vault</h3>
-            <p className="text-xs text-slate-400">
-              {isDemoMode ? 'Showing Demo Samples' : `${biomarkers.length} personal lab reports saved locally`}
-            </p>
-          </div>
+        <div className="flex gap-1.5 overflow-x-auto pb-1">
+          {(['all', 'vitamins', 'hematology', 'lipids', 'metabolic', 'inflammation'] as const).map((cat) => (
+            <button
+              key={cat}
+              type="button"
+              onClick={() => setFilter(cat)}
+              className={`shrink-0 rounded-full border px-3 py-1.5 text-[11px] font-semibold capitalize transition ${
+                filter === cat
+                  ? 'border-indigo-400/50 bg-indigo-500/20 text-white'
+                  : 'border-white/10 bg-white/[0.03] text-slate-400'
+              }`}
+            >
+              {cat === 'hematology' ? 'Blood' : cat}
+            </button>
+          ))}
         </div>
+
         {!isDemoMode && (
           <button
             type="button"
-            onClick={() => openWithTemplate()}
-            className="flex items-center gap-1 rounded-full border border-indigo-400/35 bg-indigo-500/15 px-3 py-1.5 text-xs font-semibold text-indigo-200"
+            onClick={() => openModal()}
+            className="inline-flex shrink-0 items-center gap-1 rounded-full bg-indigo-500 px-3.5 py-2 text-xs font-bold text-white"
           >
             <Plus className="h-3.5 w-3.5" />
-            Add Lab
+            Add
           </button>
         )}
       </div>
 
-      {biomarkers.length === 0 ? (
-        <div className="space-y-3 rounded-2xl border border-dashed border-white/15 bg-white/[0.02] p-4">
-          <p className="text-center text-xs leading-relaxed text-slate-300">
-            Your Medical Lab Vault is completely empty—no placeholder results are pre-filled. Tap a biomarker below to enter your own blood test value:
-          </p>
-          <div className="flex flex-wrap justify-center gap-1.5">
+      {visible.length === 0 ? (
+        <section className="aether-card rounded-3xl p-6 text-center space-y-4">
+          <div className="mx-auto flex h-12 w-12 items-center justify-center rounded-2xl bg-indigo-500/15 text-indigo-400">
+            <FlaskConical className="h-6 w-6" />
+          </div>
+          <div>
+            <h2 className="text-sm font-semibold text-white">Your Lab Vault is Empty</h2>
+            <p className="mt-1 text-xs leading-relaxed text-slate-400">
+              No fake results are pre-filled. Tap any common biomarker below to log your real blood test result offline:
+            </p>
+          </div>
+          <div className="flex flex-wrap justify-center gap-2">
             {LAB_BIOMARKER_TEMPLATES.map((tpl) => (
               <button
                 key={tpl.name}
                 type="button"
-                onClick={() => openWithTemplate(tpl)}
-                className="rounded-full border border-white/12 bg-white/[0.05] px-3 py-1.5 text-[11px] font-medium text-slate-200 hover:border-indigo-400/50"
+                onClick={() => openModal(tpl)}
+                className="rounded-full border border-white/12 bg-white/[0.05] px-3 py-1.5 text-xs font-medium text-slate-200 hover:border-indigo-400/50"
               >
                 + {tpl.name}
               </button>
             ))}
           </div>
-        </div>
+        </section>
       ) : (
-        <div className="space-y-2.5">
-          {biomarkers.map((m) => {
-            const inOptimal = m.value >= m.optimalMin && m.value <= m.optimalMax;
-            const inNormal = m.value >= m.normalMin && m.value <= m.normalMax;
-            const statusColor = inOptimal
-              ? 'text-emerald-300 border-emerald-500/25 bg-emerald-500/15'
-              : inNormal
-                ? 'text-amber-300 border-amber-500/25 bg-amber-500/15'
-                : 'text-rose-300 border-rose-500/25 bg-rose-500/15';
-            const statusLabel = inOptimal ? 'Optimal' : inNormal ? 'Borderline' : 'Out of Range';
-
-            const rangeSpan = Math.max(0.01, m.normalMax - m.normalMin);
-            const optLeftPct = Math.max(0, Math.min(100, ((m.optimalMin - m.normalMin) / rangeSpan) * 100));
-            const optWidthPct = Math.max(6, Math.min(100 - optLeftPct, ((m.optimalMax - m.optimalMin) / rangeSpan) * 100));
-            const markerPct = Math.max(2, Math.min(98, ((m.value - m.normalMin) / rangeSpan) * 100));
+        <div className="space-y-3">
+          {visible.map((m) => {
+            const inOpt = m.value >= m.optimalMin && m.value <= m.optimalMax;
+            const inNorm = m.value >= m.normalMin && m.value <= m.normalMax;
+            const badgeCls = inOpt
+              ? 'border-emerald-500/30 bg-emerald-500/15 text-emerald-300'
+              : inNorm
+                ? 'border-amber-500/30 bg-amber-500/15 text-amber-300'
+                : 'border-rose-500/30 bg-rose-500/15 text-rose-300';
+            const span = Math.max(0.01, m.normalMax - m.normalMin);
+            const optLeft = Math.max(0, Math.min(100, ((m.optimalMin - m.normalMin) / span) * 100));
+            const optW = Math.max(8, Math.min(100 - optLeft, ((m.optimalMax - m.optimalMin) / span) * 100));
+            const dotPos = Math.max(2, Math.min(98, ((m.value - m.normalMin) / span) * 100));
 
             return (
-              <div key={m.id} className="rounded-2xl border border-white/[0.07] bg-white/[0.025] p-3.5">
+              <div key={m.id} className="aether-card rounded-3xl p-4 space-y-3">
                 <div className="flex items-start justify-between gap-2">
                   <div>
                     <p className="text-sm font-semibold text-white">{m.name}</p>
-                    <p className="tabular-mono text-[11px] text-slate-400">
-                      Optimal {m.optimalMin}–{m.optimalMax} {m.unit} • {m.testedDate}
+                    <p className="tabular-mono mt-0.5 text-[11px] text-slate-400">
+                      Optimal {m.optimalMin}–{m.optimalMax} {m.unit} · {m.testedDate}
                     </p>
                   </div>
                   <div className="flex items-center gap-2">
@@ -141,8 +162,8 @@ export const LabVault: React.FC<LabVaultProps> = ({
                       <p className="tabular-mono text-sm font-bold text-white">
                         {m.value} <span className="text-[11px] font-normal text-slate-400">{m.unit}</span>
                       </p>
-                      <span className={`inline-block rounded-full border px-2 py-0.5 text-[10px] font-semibold ${statusColor}`}>
-                        {statusLabel}
+                      <span className={`inline-block rounded-full border px-2 py-0.5 text-[10px] font-semibold ${badgeCls}`}>
+                        {inOpt ? 'Optimal' : inNorm ? 'Borderline' : 'Out of Range'}
                       </span>
                     </div>
                     {!isDemoMode && (
@@ -152,47 +173,48 @@ export const LabVault: React.FC<LabVaultProps> = ({
                         className="p-1 text-slate-500 hover:text-rose-400"
                         aria-label={`Delete ${m.name}`}
                       >
-                        <Trash2 className="h-3.5 w-3.5" />
+                        <Trash2 className="h-4 w-4" />
                       </button>
                     )}
                   </div>
                 </div>
 
-                <div className="relative mt-3 h-2 w-full rounded-full bg-white/[0.08]">
+                <div className="relative h-2.5 w-full rounded-full bg-white/[0.08]">
                   <div
-                    className="absolute top-0 h-full rounded-full bg-emerald-500/40"
-                    style={{ left: `${optLeftPct}%`, width: `${optWidthPct}%` }}
+                    className="absolute top-0 h-full rounded-full bg-emerald-500/35"
+                    style={{ left: `${optLeft}%`, width: `${optW}%` }}
                   />
                   <div
-                    className={`absolute top-1/2 h-3.5 w-3.5 -translate-x-1/2 -translate-y-1/2 rounded-full border-2 border-[#07090D] ${
-                      inOptimal ? 'bg-emerald-400' : inNormal ? 'bg-amber-400' : 'bg-rose-500'
+                    className={`absolute top-1/2 h-4 w-4 -translate-x-1/2 -translate-y-1/2 rounded-full border-2 border-[#07090D] ${
+                      inOpt ? 'bg-emerald-400' : inNorm ? 'bg-amber-400' : 'bg-rose-500'
                     }`}
-                    style={{ left: `${markerPct}%` }}
+                    style={{ left: `${dotPos}%` }}
                   />
                 </div>
-                {m.notes && <p className="mt-2 text-xs text-slate-400">{m.notes}</p>}
+                {m.notes && <p className="text-xs text-slate-400">{m.notes}</p>}
               </div>
             );
           })}
         </div>
       )}
 
+      {/* Clean Non-Overlapping Modal */}
       {modalOpen && (
         <div
-          className="fixed inset-0 z-50 flex items-end justify-center bg-black/75 backdrop-blur-sm sm:items-center sm:p-4"
+          className="fixed inset-0 z-50 flex items-end justify-center bg-black/80 backdrop-blur-sm sm:items-center sm:p-4"
           onClick={() => setModalOpen(false)}
         >
           <form
             onSubmit={handleSave}
             onClick={(e) => e.stopPropagation()}
-            className="aether-glass-elevated w-full max-w-md space-y-3 rounded-t-3xl p-5 shadow-glass sm:rounded-3xl"
+            className="aether-glass-elevated max-h-[88vh] w-full max-w-md space-y-3.5 overflow-y-auto rounded-t-3xl p-5 safe-bottom sm:rounded-3xl"
           >
             <div className="flex items-center justify-between">
               <h3 className="text-sm font-semibold text-white">Add Personal Blood Biomarker</h3>
               <button
                 type="button"
                 onClick={() => setModalOpen(false)}
-                className="rounded-full bg-white/[0.05] p-1.5 text-slate-400"
+                className="rounded-full bg-white/[0.06] p-2 text-slate-400 hover:text-white"
               >
                 <X className="h-4 w-4" />
               </button>
@@ -205,12 +227,12 @@ export const LabVault: React.FC<LabVaultProps> = ({
                 value={name}
                 onChange={(e) => setName(e.target.value)}
                 placeholder="Biomarker name"
-                className="col-span-2 rounded-xl border border-white/10 bg-[#07090D] px-3 py-2 text-xs text-white"
+                className="col-span-2 rounded-xl border border-white/10 bg-[#07090D] px-3 py-2.5 text-xs text-white"
               />
               <select
                 value={category}
                 onChange={(e) => setCategory(e.target.value as LabBiomarker['category'])}
-                className="rounded-xl border border-white/10 bg-[#07090D] px-2 py-2 text-xs text-slate-200"
+                className="rounded-xl border border-white/10 bg-[#07090D] px-2 py-2.5 text-xs text-slate-200"
               >
                 <option value="vitamins">Vitamins</option>
                 <option value="hematology">Blood</option>
@@ -222,15 +244,15 @@ export const LabVault: React.FC<LabVaultProps> = ({
 
             <div className="grid grid-cols-3 gap-2">
               <div>
-                <label className="text-[11px] text-slate-400">Your Result</label>
+                <label className="text-[11px] text-slate-400">Result</label>
                 <input
                   type="number"
                   required
                   step="0.01"
                   value={value}
                   onChange={(e) => setValue(e.target.value)}
-                  placeholder="Enter value"
-                  className="tabular-mono mt-1 w-full rounded-xl border border-indigo-400/40 bg-[#07090D] px-2.5 py-2 text-xs text-white"
+                  placeholder="Value"
+                  className="tabular-mono mt-1 w-full rounded-xl border border-indigo-400/40 bg-[#07090D] px-3 py-2 text-xs text-white"
                 />
               </div>
               <div>
@@ -239,11 +261,11 @@ export const LabVault: React.FC<LabVaultProps> = ({
                   type="text"
                   value={unit}
                   onChange={(e) => setUnit(e.target.value)}
-                  className="mt-1 w-full rounded-xl border border-white/10 bg-[#07090D] px-2.5 py-2 text-xs text-white"
+                  className="mt-1 w-full rounded-xl border border-white/10 bg-[#07090D] px-3 py-2 text-xs text-white"
                 />
               </div>
               <div>
-                <label className="text-[11px] text-slate-400">Test Date</label>
+                <label className="text-[11px] text-slate-400">Date</label>
                 <input
                   type="date"
                   value={testedDate}
@@ -262,14 +284,14 @@ export const LabVault: React.FC<LabVaultProps> = ({
                     step="0.1"
                     value={optimalMin}
                     onChange={(e) => setOptimalMin(Number(e.target.value))}
-                    className="tabular-mono w-full rounded-xl border border-white/10 bg-[#07090D] px-2 py-1.5 text-xs text-white"
+                    className="tabular-mono w-full rounded-xl border border-white/10 bg-[#07090D] px-2 py-2 text-xs text-white"
                   />
                   <input
                     type="number"
                     step="0.1"
                     value={optimalMax}
                     onChange={(e) => setOptimalMax(Number(e.target.value))}
-                    className="tabular-mono w-full rounded-xl border border-white/10 bg-[#07090D] px-2 py-1.5 text-xs text-white"
+                    className="tabular-mono w-full rounded-xl border border-white/10 bg-[#07090D] px-2 py-2 text-xs text-white"
                   />
                 </div>
               </div>
@@ -281,14 +303,14 @@ export const LabVault: React.FC<LabVaultProps> = ({
                     step="0.1"
                     value={normalMin}
                     onChange={(e) => setNormalMin(Number(e.target.value))}
-                    className="tabular-mono w-full rounded-xl border border-white/10 bg-[#07090D] px-2 py-1.5 text-xs text-white"
+                    className="tabular-mono w-full rounded-xl border border-white/10 bg-[#07090D] px-2 py-2 text-xs text-white"
                   />
                   <input
                     type="number"
                     step="0.1"
                     value={normalMax}
                     onChange={(e) => setNormalMax(Number(e.target.value))}
-                    className="tabular-mono w-full rounded-xl border border-white/10 bg-[#07090D] px-2 py-1.5 text-xs text-white"
+                    className="tabular-mono w-full rounded-xl border border-white/10 bg-[#07090D] px-2 py-2 text-xs text-white"
                   />
                 </div>
               </div>
@@ -298,19 +320,16 @@ export const LabVault: React.FC<LabVaultProps> = ({
               type="text"
               value={notes}
               onChange={(e) => setNotes(e.target.value)}
-              placeholder="Optional note (e.g. lab name, supplement plan)"
-              className="w-full rounded-xl border border-white/10 bg-[#07090D] px-3 py-2 text-xs text-white"
+              placeholder="Optional note (e.g., Lab name, supplement plan)"
+              className="w-full rounded-xl border border-white/10 bg-[#07090D] px-3 py-2.5 text-xs text-white"
             />
 
-            <button
-              type="submit"
-              className="w-full rounded-2xl bg-indigo-500 py-3 text-xs font-bold text-white"
-            >
-              Save to Offline Lab Vault
+            <button type="submit" className="w-full rounded-2xl bg-indigo-500 py-3 text-xs font-bold text-white">
+              Save Biomarker
             </button>
           </form>
         </div>
       )}
-    </section>
+    </PageShell>
   );
 };

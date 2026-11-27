@@ -1,8 +1,8 @@
 import {
-  BiologicalAgeMetrics,
-  CardioLoadAcwr,
+  CardioLoadEwma,
   ConnectedDevice,
   DailyBiometricRecord,
+  FitnessAgeMetrics,
   HabitCorrelationResult,
   MorningBriefing,
   RecoveryBreakdown,
@@ -19,60 +19,58 @@ export interface BiometricContextBundle {
   recovery: RecoveryBreakdown;
   strain: StrainBreakdown;
   sleepPlan: SleepDebtPlan;
-  acwr: CardioLoadAcwr;
-  bioAge: BiologicalAgeMetrics;
-  topCorrelations: HabitCorrelationResult[];
+  ewma: CardioLoadEwma;
+  fitnessAge: FitnessAgeMetrics;
+  correlations: HabitCorrelationResult[];
 }
 
 export function generateOfflineMorningBriefing(ctx: BiometricContextBundle): MorningBriefing {
-  const { recovery, strain, sleepPlan, acwr, today } = ctx;
+  const { recovery, strain, sleepPlan, ewma, today } = ctx;
 
   if (!today || recovery.score === null) {
     return {
-      headline: 'Ready to Connect Your Biometrics',
+      headline: 'Clean Slate — Connect or Check In',
       summary:
-        'AETHER starts completely clean with zero fake placeholder data. Sync Android Health Connect (via Mi Fitness / Zepp / Fitbit) or log your first morning metrics to unlock personalized recovery & strain guidance.',
+        'AETHER keeps zero fake data on launch. Sync Android Health Connect from your watch or complete a 15-second Morning Wellness check-in to generate personalized daily guidance.',
       actionItems: [
-        'Open the Vault tab and tap "Connect & Grant Permissions" to sync Android Health Connect with your smartwatch.',
-        'Use the + Log tab to record today’s Habits, Strength session, Nutrition, or manual morning RHR & Sleep.',
-        'Want to preview how charts look before syncing? Toggle "Preview Demo Mode" inside Vault → Settings.',
+        'Open System → Watch & Health Connect to authorize and pull your real watch data.',
+        'Tap Log → Wellness for a 15-second Hooper check-in (Sleep Quality, Fatigue, Stress, Soreness).',
+        'Open System → Science Guide anytime to read how every score works in plain English.',
       ],
       generatedBy: 'aether_heuristic',
       generatedAtIso: new Date().toISOString(),
     };
   }
 
-  let headline = 'Balanced Readiness — Build Steadily';
-  if (recovery.state === 'optimal') headline = 'High Readiness — Green Light to Push';
-  else if (recovery.state === 'low') headline = 'Low Recovery — Prioritize Restoration';
+  let headline = 'Balanced Readiness — Train Smart';
+  if (recovery.perceptionOverrideActive) headline = 'Perception Override — Dial Back Today';
+  else if (recovery.state === 'optimal') headline = 'Strong Rebound — Ready for Quality Work';
+  else if (recovery.state === 'low') headline = 'Recovery Low — Prioritize Restoration';
 
-  const rhrPart =
+  const rhrTxt =
     today.restingHrBpm !== null
-      ? `RHR ${today.restingHrBpm} bpm (${recovery.rhrDeltaBpm! >= 0 ? '+' : ''}${recovery.rhrDeltaBpm} vs baseline)`
+      ? `RHR ${today.restingHrBpm} bpm (${recovery.rhrZScore !== null ? `${recovery.rhrZScore >= 0 ? '+' : ''}${recovery.rhrZScore}σ` : 'baseline'})`
       : 'RHR not synced';
-  const sleepPart =
-    today.sleep && today.sleep.totalSleepMin > 0
-      ? `${formatMinutesToHm(today.sleep.totalSleepMin)} sleep (${recovery.restorativeSleepPct ?? 0}% restorative)`
-      : 'sleep not synced';
 
-  const summary = `Recovery is ${recovery.score}% (${recovery.badgeLabel}) based on ${rhrPart} and ${sleepPart}. Current Strain is ${strain.score.toFixed(1)}/21 with ACWR at ${acwr.ratio ?? '--'} (${acwr.statusLabel}).`;
+  const summary = `Recovery sits at ${recovery.score}% (${recovery.swcLabel}) with ${rhrTxt}. Uncoupled EWMA workload is ${ewma.ratio ?? '--'} (${ewma.statusLabel})${ewma.monotonyAlert ? ' and weekly monotony is elevated' : ''}.`;
 
-  const action1 =
-    recovery.state === 'optimal'
-      ? `Target ${strain.targetRange[0]}–${strain.targetRange[1]} Strain today with high-quality Zone 3–4 conditioning or progressive strength work.`
+  const action1 = recovery.perceptionOverrideActive
+    ? 'Your morning feel flagged high fatigue or soreness despite calm heart-rate numbers. Keep today light (Zone 1–2 movement or mobility).'
+    : recovery.state === 'optimal'
+      ? `Target ${strain.targetRange[0]}–${strain.targetRange[1]} Strain today with focused conditioning or progressive strength sets.`
       : recovery.state === 'moderate'
-        ? `Aim for ${strain.targetRange[0]}–${strain.targetRange[1]} Strain—steady Zone 2 endurance or controlled RPE 7–8 lifting.`
-        : `Keep Strain below ${strain.targetRange[1]} today; focus on light walking, mobility, and early sleep recovery.`;
+        ? `Aim for ${strain.targetRange[0]}–${strain.targetRange[1]} Strain—steady aerobic volume or crisp technique work.`
+        : `Keep Strain under ${strain.targetRange[1]} and protect recovery with easy movement and early rest.`;
 
   const action2 = sleepPlan.hasSleepData
-    ? `Recommended tonight bedtime is ${sleepPlan.recommendedBedtime} (${formatMinutesToHm(sleepPlan.recommendedDurationMin)} target) to manage your ${formatMinutesToHm(sleepPlan.rolling7dDebtMin)} 7-day sleep debt.`
-    : `Wear your watch overnight (or log sleep manually) so AETHER can calculate rolling 7-day Sleep Debt and bedtime timing.`;
+    ? `Lights-out around ${sleepPlan.recommendedBedtime} supports your ${formatMinutesToHm(sleepPlan.personalBaselineNeedMin)} personal sleep need (7d regularity: ${sleepPlan.regularityScorePct ?? '--'}%).`
+    : 'Sync overnight sleep from Health Connect (or log manually) to track 7-day Sleep Regularity.';
 
-  const remainingWater = Math.max(0, ctx.profile.dailyWaterGoalMl - today.hydration.waterMl);
-  const action3 =
-    remainingWater > 400
-      ? `Hydration is at ${today.hydration.waterMl} ml—drink ${remainingWater} ml more water before evening and log your habits in + Log.`
-      : `Hydration goal is on track (${today.hydration.waterMl} ml). Cut off caffeine early to protect tonight's deep sleep.`;
+  const action3 = ewma.monotonyAlert
+    ? `Weekly training monotony reached ${ewma.weeklyMonotony} (>2.0). Vary your intensity—schedule a true easy day soon.`
+    : !today.wellness
+      ? 'Complete today’s 15-second Morning Wellness check-in so AETHER can cross-check how your body actually feels.'
+      : `Hydration is ${today.hydration.waterMl}/${ctx.profile.dailyWaterGoalMl} ml. Log meals & habits to unlock 95% CI habit insights.`;
 
   return {
     headline,
@@ -84,17 +82,14 @@ export function generateOfflineMorningBriefing(ctx: BiometricContextBundle): Mor
 }
 
 function buildSystemPrompt(ctx: BiometricContextBundle): string {
-  return `You are AETHER Coach, a concise, evidence-based biometric sports scientist.
-Current User Telemetry:
-- Connected Device: ${ctx.device.connected ? ctx.device.name : 'Not connected yet'}
-- Recovery: ${ctx.recovery.score !== null ? `${ctx.recovery.score}% (${ctx.recovery.badgeLabel})` : 'No data synced yet'}
-- Resting HR: ${ctx.today?.restingHrBpm ?? 'Not recorded'} bpm (30d baseline: ${ctx.recovery.rhrBaseline30d ?? '--'})
-- Overnight HRV: ${ctx.today?.overnightHrvMs ?? 'Not exported (Proxy Mode)'}
-- Daily Strain: ${ctx.strain.score}/21 (Muscular boost: +${ctx.strain.muscularStrainBoost})
-- Sleep: ${ctx.today?.sleep ? formatMinutesToHm(ctx.today.sleep.totalSleepMin) : 'Not recorded'} | 7d Debt: ${formatMinutesToHm(ctx.sleepPlan.rolling7dDebtMin)} | Bedtime: ${ctx.sleepPlan.recommendedBedtime}
-- ACWR: ${ctx.acwr.ratio ?? '--'} (${ctx.acwr.statusLabel})
-- Biological Age: ${ctx.bioAge.biologicalAge ?? '--'} yrs (Chronological: ${ctx.bioAge.chronologicalAge})
-Give concrete, readable, science-grounded advice referencing only real synced numbers. Never invent metrics that aren't present.`;
+  return `You are AETHER Coach, an evidence-based sports scientist. Be concise, honest about optical sensor limits, and reference only real synced numbers:
+- Recovery: ${ctx.recovery.score ?? 'No data'}% (${ctx.recovery.badgeLabel}, SWC: ${ctx.recovery.swcLabel}, Perception Override: ${ctx.recovery.perceptionOverrideActive})
+- RHR: ${ctx.today?.restingHrBpm ?? '--'} bpm (30d mean ${ctx.recovery.rhrMean30d ?? '--'} ± ${ctx.recovery.rhrSd30d ?? '--'}, Z=${ctx.recovery.rhrZScore ?? '--'})
+- Hooper Wellness: ${ctx.today?.wellness ? `${ctx.today.wellness.wellnessScore}/100 (Soreness ${ctx.today.wellness.soreness}/7, Stress ${ctx.today.wellness.stress}/7, Freshness ${ctx.today.wellness.freshness}/7)` : 'Not logged'}
+- Dual Strain: Total ${ctx.strain.score}/21 (Cardio ${ctx.strain.cardioScore}, Muscular ${ctx.strain.muscularScore})
+- Uncoupled EWMA: ${ctx.ewma.ratio ?? '--'} (${ctx.ewma.statusLabel}) | Weekly Monotony: ${ctx.ewma.weeklyMonotony ?? '--'}
+- Sleep: ${ctx.today?.sleep ? formatMinutesToHm(ctx.today.sleep.totalSleepMin) : '--'} vs Personal Need ${formatMinutesToHm(ctx.sleepPlan.personalBaselineNeedMin)} | 7d Regularity: ${ctx.sleepPlan.regularityScorePct ?? '--'}%
+- Cardio & Sleep Fitness Age: ${ctx.fitnessAge.fitnessAge ?? '--'} yrs (VO2: ${ctx.fitnessAge.vo2MaxUsed ?? '--'} via ${ctx.fitnessAge.vo2Source})`;
 }
 
 export async function generateGeminiBriefing(ctx: BiometricContextBundle): Promise<MorningBriefing> {
@@ -136,7 +131,7 @@ export async function generateGeminiBriefing(ctx: BiometricContextBundle): Promi
       };
     }
   } catch {
-    // Fallback cleanly
+    // fallback
   }
   return generateOfflineMorningBriefing(ctx);
 }
@@ -151,7 +146,7 @@ export async function askAetherCoach(question: string, ctx: BiometricContextBund
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
-            contents: [{ role: 'user', parts: [{ text: `${buildSystemPrompt(ctx)}\n\nQuestion: ${question}` }] }],
+            contents: [{ role: 'user', parts: [{ text: `${buildSystemPrompt(ctx)}\n\nUser Question: ${question}` }] }],
             generationConfig: { temperature: 0.5, maxOutputTokens: 320 },
           }),
         }
@@ -162,20 +157,20 @@ export async function askAetherCoach(question: string, ctx: BiometricContextBund
         if (text) return text.trim();
       }
     } catch {
-      // Fall back to offline reasoning
+      // fallback
     }
   }
 
   if (!ctx.today || ctx.recovery.score === null) {
-    return 'No biometric data is synced yet. Open the Vault tab to connect Android Health Connect (Mi Fitness / Redmi Watch 5 Lite), or log your morning RHR, Sleep, and Workouts in the + Log tab so I can analyze your personal numbers.';
+    return 'No biometric data is synced yet. Go to System → Watch & Health Connect to sync your watch, or open Log → Wellness to complete your first 15-second morning check-in.';
   }
 
   const q = question.toLowerCase();
-  if (q.includes('train') || q.includes('strain') || q.includes('workout')) {
-    return `Recovery is ${ctx.recovery.score}% (${ctx.recovery.state}), giving you a target Strain window of ${ctx.strain.targetRange[0]}–${ctx.strain.targetRange[1]}. You are currently at ${ctx.strain.score.toFixed(1)} Strain (including +${ctx.strain.muscularStrainBoost.toFixed(1)} muscular boost) with ACWR at ${ctx.acwr.ratio ?? '--'} (${ctx.acwr.statusLabel}).`;
+  if (q.includes('train') || q.includes('strain') || q.includes('ewma')) {
+    return `Recovery is ${ctx.recovery.score}% (${ctx.recovery.swcLabel}). Today's Strain is ${ctx.strain.score}/21 (Cardio ${ctx.strain.cardioScore} • Muscular ${ctx.strain.muscularScore}). Your Uncoupled EWMA workload ratio is ${ctx.ewma.ratio ?? '--'} (${ctx.ewma.statusLabel})${ctx.ewma.monotonyAlert ? ` — note that weekly monotony is ${ctx.ewma.weeklyMonotony}, so mix in a real rest day.` : '.'}`;
   }
-  if (q.includes('sleep') || q.includes('bed') || q.includes('debt')) {
-    return `You logged ${ctx.today.sleep ? formatMinutesToHm(ctx.today.sleep.totalSleepMin) : 'no sleep yet'}. Rolling 7-day sleep debt is ${formatMinutesToHm(ctx.sleepPlan.rolling7dDebtMin)}, and your recommended tonight bedtime is ${ctx.sleepPlan.recommendedBedtime} for a ${ctx.sleepPlan.targetWakeTime} wake-up.`;
+  if (q.includes('sleep') || q.includes('bed')) {
+    return `Your personal sleep baseline is ${formatMinutesToHm(ctx.sleepPlan.personalBaselineNeedMin)}. Recommended bedtime is ${ctx.sleepPlan.recommendedBedtime} (target wake ${ctx.sleepPlan.targetWakeTime}), with 7-day Sleep Regularity at ${ctx.sleepPlan.regularityScorePct ?? '--'}%.`;
   }
-  return `Your live snapshot: Recovery ${ctx.recovery.score}% (${ctx.recovery.badgeLabel}), Strain ${ctx.strain.score.toFixed(1)}/21, RHR ${ctx.today.restingHrBpm ?? '--'} bpm, Sleep ${ctx.today.sleep ? formatMinutesToHm(ctx.today.sleep.totalSleepMin) : '--'}, and ACWR ${ctx.acwr.ratio ?? '--'}. Ask about training intensity, bedtime timing, or habit impacts.`;
+  return `Live snapshot: Recovery ${ctx.recovery.score}% (${ctx.recovery.swcLabel}), Dual Strain ${ctx.strain.score}/21 (Cardio ${ctx.strain.cardioScore} / Muscular ${ctx.strain.muscularScore}), Uncoupled EWMA ${ctx.ewma.ratio ?? '--'}, and Sleep Regularity ${ctx.sleepPlan.regularityScorePct ?? '--'}%.`;
 }

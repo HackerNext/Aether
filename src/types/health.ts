@@ -39,13 +39,29 @@ export interface ConnectedDevice {
   ecosystem: string;
   transport: IngestionTransport;
   connected: boolean;
-  /** Only populated when a real BLE device reports 0x180F battery; Health Connect does not provide watch battery. */
   batteryPct: number | null;
   lastSyncedIso: string | null;
   capabilities: SensorCapabilities;
   liveBleBpm?: number;
   liveBleRrMs?: number;
   healthConnect: HealthConnectDiagnostics;
+}
+
+/** Upgrade 2: Validated 15-Second Morning Hooper Wellness Check-In (1-7 scales) */
+export interface HooperWellnessLog {
+  /** 1 = Terrible sleep, 7 = Deeply restorative */
+  sleepQuality: number;
+  /** 1 = Completely exhausted, 7 = Fresh & energized (higher = better) */
+  freshness: number;
+  /** 1 = Calm & clear, 7 = Overwhelmed / high stress (higher = worse) */
+  stress: number;
+  /** 1 = Zero soreness, 7 = Severe muscle soreness (higher = worse) */
+  soreness: number;
+  /** Composite Hooper Index: 4 (best) to 28 (worst) = (8-sleepQ) + (8-freshness) + stress + soreness */
+  hooperIndex: number;
+  /** Normalized 0-100 wellness score (higher = better) */
+  wellnessScore: number;
+  loggedAtIso: string;
 }
 
 export interface SleepStageBreakdown {
@@ -97,6 +113,8 @@ export interface WorkoutRecord {
   maxHrBpm: number;
   activeCaloriesKcal: number;
   hrZones: HeartRateZonesMinutes;
+  /** Upgrade 4: Foster Session RPE (1-10) for lag-free anaerobic tracking */
+  sessionRpe?: number;
   muscularLoadPoints: number;
   strengthSets?: StrengthExerciseSet[];
   computedStrainContribution: number;
@@ -125,7 +143,6 @@ export interface HabitDefinition {
   id: string;
   label: string;
   category: 'recovery' | 'nutrition' | 'sleep' | 'lifestyle';
-  icon: string;
   expectedDirection: 'positive' | 'negative' | 'neutral';
 }
 
@@ -138,7 +155,7 @@ export interface HourlyBiometricPoint {
 }
 
 export interface DailyBiometricRecord {
-  date: string; // YYYY-MM-DD
+  date: string;
   restingHrBpm: number | null;
   overnightHrvMs: number | null;
   spo2Pct: number | null;
@@ -146,6 +163,7 @@ export interface DailyBiometricRecord {
   activeCaloriesKcal: number;
   vo2MaxEstimate: number | null;
   sleep: SleepSessionRecord | null;
+  wellness: HooperWellnessLog | null;
   daytimeHrZones: HeartRateZonesMinutes;
   workouts: WorkoutRecord[];
   meals: MealRecord[];
@@ -157,6 +175,7 @@ export interface DailyBiometricRecord {
 
 export type RecoveryState = 'optimal' | 'moderate' | 'low' | 'no_data';
 export type RecoveryMode = 'hrv_native' | 'rhr_sleep_proxy' | 'awaiting_data';
+export type SwcBandStatus = 'normal_noise' | 'positive_shift' | 'elevated_strain' | 'parasympathetic_alert' | 'insufficient';
 
 export interface RecoveryBreakdown {
   score: number | null;
@@ -164,13 +183,22 @@ export interface RecoveryBreakdown {
   mode: RecoveryMode;
   badgeLabel: string;
   colorHex: string;
-  rhrBaseline30d: number | null;
+  /** Upgrade 1: Personal 30d Mean, SD, Z-score & SWC (±0.5σ) status */
+  rhrMean30d: number | null;
+  rhrSd30d: number | null;
   rhrDeltaBpm: number | null;
-  hrvBaseline30d: number | null;
-  hrvDeltaPct: number | null;
+  rhrZScore: number | null;
+  swcStatus: SwcBandStatus;
+  swcLabel: string;
+  hrvMean30d: number | null;
+  hrvSd30d: number | null;
+  hrvZScore: number | null;
   restorativeSleepPct: number | null;
   sleepEfficiencyPct: number | null;
   sleepPerformancePct: number | null;
+  /** Upgrade 2: Perception Override when wearable looks green but Hooper Fatigue/Soreness spike */
+  perceptionOverrideActive: boolean;
+  perceptionOverrideReason: string | null;
   components: {
     label: string;
     weightPct: number;
@@ -179,9 +207,13 @@ export interface RecoveryBreakdown {
   }[];
 }
 
+/** Upgrade 4: Dual Cardio + Muscular Strain sub-bars */
 export interface StrainBreakdown {
   score: number;
+  cardioScore: number; // 0-21 cardio component
+  muscularScore: number; // 0-21 muscular/soreness component
   cardioLoadUnits: number;
+  sessionRpeLoadUnits: number;
   muscularLoadUnits: number;
   muscularStrainBoost: number;
   zoneMinutes: HeartRateZonesMinutes;
@@ -189,49 +221,66 @@ export interface StrainBreakdown {
   label: string;
 }
 
+/** Upgrade 5: Adaptive Personal Sleep Need & 7-Day Sleep Regularity Score */
 export interface SleepDebtPlan {
   hasSleepData: boolean;
+  personalBaselineNeedMin: number;
+  isAutoCalibratedNeed: boolean;
   rolling7dDebtMin: number;
-  baselineNeedMin: number;
   todayStrainAdjustmentMin: number;
   recommendedDurationMin: number;
   targetWakeTime: string;
   recommendedBedtime: string;
+  bedtimeShiftCappedNote: string | null;
   sleepPerformancePct: number | null;
+  regularityScorePct: number | null; // 7-day bedtime/waketime consistency (0-100)
+  regularityLabel: string;
 }
 
-export type AcwrStatus = 'detraining' | 'optimal' | 'building' | 'overreaching' | 'no_data';
+/** Upgrade 3: Uncoupled EWMA + Minimum Chronic Floor + Training Monotony */
+export type WorkloadStatus = 'detraining' | 'optimal' | 'building' | 'overreaching' | 'low_chronic_floor' | 'no_data';
 
-export interface CardioLoadAcwr {
-  acute7dAvg: number;
-  chronic28dAvg: number;
+export interface CardioLoadEwma {
+  acuteEwma7d: number;
+  chronicUncoupledEwma28d: number;
   ratio: number | null;
-  status: AcwrStatus;
+  status: WorkloadStatus;
   statusLabel: string;
   colorHex: string;
+  belowChronicFloor: boolean;
+  weeklyMonotony: number | null;
+  monotonyAlert: boolean;
+  weeklyTotalStrain: number;
 }
 
-export interface BiologicalAgeMetrics {
+/** Upgrade 6: Honestly framed Cardiovascular & Sleep Fitness Age + Field-Test VO2 Max */
+export interface FitnessAgeMetrics {
   hasEnoughData: boolean;
   chronologicalAge: number;
-  biologicalAge: number | null;
+  fitnessAge: number | null;
   deltaYears: number | null;
   healthspanPace: number | null;
   rhr30dAvg: number | null;
-  vo2Max30dAvg: number | null;
-  sleepConsistencyPct: number | null;
+  vo2MaxUsed: number | null;
+  vo2Source: 'field_test_cooper' | 'field_test_5k' | 'wearable' | 'rhr_estimate';
+  sleepRegularityPct: number | null;
 }
 
+/** Upgrade 6: Habit Correlation Engine with Minimum Sample Gates & 95% Confidence Intervals */
 export interface HabitCorrelationResult {
   habitId: string;
   label: string;
   category: HabitDefinition['category'];
   sampleDaysWith: number;
   sampleDaysWithout: number;
+  requiredMinSamples: number;
+  unlocked: boolean;
   recoveryDeltaPct: number;
+  recoveryCi95: number;
   deepSleepDeltaPct: number;
+  deepSleepCi95: number;
   sleepEfficiencyDeltaPct: number;
-  confidence: 'high' | 'moderate' | 'emerging';
+  confidence: 'high' | 'moderate' | 'locked';
 }
 
 export interface LabBiomarker {
@@ -251,11 +300,18 @@ export interface LabBiomarker {
 export interface UserProfile {
   name: string;
   chronologicalAge: number;
-  maxHrBpm: number;
+  /** Upgrade 4: Observed Peak HR overrides 220-Age */
+  observedMaxHrBpm: number | null;
   bodyWeightKg: number;
+  /** Upgrade 5: Adaptive Personal Sleep Need */
+  personalSleepNeedMin: number;
+  autoCalibrateSleepNeed: boolean;
   targetWakeTime: string;
   dailyWaterGoalMl: number;
   dailyCalorieGoal: number;
+  /** Upgrade 6: Field-test VO2 calibration */
+  cooper12MinMeters: number | null;
+  fiveKmTimeSeconds: number | null;
   geminiApiKey: string;
 }
 
@@ -277,23 +333,24 @@ export interface CoachMessage {
 export interface AetherAppState {
   profile: UserProfile;
   device: ConnectedDevice;
-  /** Always false by default so zero boilerplate data appears unless the user opts into Preview Demo Mode. */
   demoSimulatorEnabled: boolean;
-  /** User's real persisted biometric records (starts empty [] until Health Connect sync or manual log). */
   records: DailyBiometricRecord[];
   habitDefinitions: HabitDefinition[];
-  /** User's real persisted blood lab biomarkers (starts empty [] until user enters real results). */
   labBiomarkers: LabBiomarker[];
   coachHistory: CoachMessage[];
 }
 
-export type ActiveTab = 'today' | 'biology' | 'log' | 'devices';
-export type DrilldownMetricType =
+export type ActiveTab = 'today' | 'biology' | 'log' | 'system';
+
+export type DedicatedPageId =
+  | null
   | 'recovery'
   | 'strain'
   | 'sleep'
-  | 'sleep_debt'
-  | 'acwr'
-  | 'rhr'
-  | 'bio_age'
-  | null;
+  | 'fitness_age'
+  | 'habits_lab'
+  | 'trends'
+  | 'devices'
+  | 'lab_vault'
+  | 'settings'
+  | 'science_docs';

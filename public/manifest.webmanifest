@@ -1,8 +1,8 @@
 {
-  "id": "com.aetheros.biometric.pwa.v2",
+  "id": "com.aetheros.biometric.pwa.v3",
   "name": "AETHER — Biometric Operating System",
   "short_name": "AETHER",
-  "description": "Universal biometric recovery, logarithmic strain, sleep architecture, and medical biomarker intelligence.",
+  "description": "Evidence-based biometric recovery, EWMA workload, sleep regularity, wellness check-ins, and medical lab vault.",
   "start_url": "./?source=aether_pwa",
   "scope": "./",
   "display": "standalone",

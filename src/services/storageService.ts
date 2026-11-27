@@ -1,6 +1,6 @@
 import { AetherAppState } from '../types/health';
 
-const STORAGE_PREFIX = 'aether_os_v2::';
+const STORAGE_PREFIX = 'aether_os_v3::';
 const STATE_KEY = `${STORAGE_PREFIX}app_state`;
 
 export function loadAetherState(): AetherAppState | null {
@@ -31,7 +31,7 @@ export function clearAetherState(): void {
     const keysToRemove: string[] = [];
     for (let i = 0; i < window.localStorage.length; i++) {
       const k = window.localStorage.key(i);
-      if (k && (k.startsWith(STORAGE_PREFIX) || k.startsWith('aether_os_v1::'))) {
+      if (k && (k.startsWith(STORAGE_PREFIX) || k.startsWith('aether_os_v2::') || k.startsWith('aether_os_v1::'))) {
         keysToRemove.push(k);
       }
     }

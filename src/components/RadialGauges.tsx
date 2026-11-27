@@ -1,7 +1,7 @@
 import React from 'react';
 import { ShieldCheck, Info } from 'lucide-react';
 import {
-  DrilldownMetricType,
+  DedicatedPageId,
   RecoveryBreakdown,
   SleepDebtPlan,
   StrainBreakdown,
@@ -12,10 +12,10 @@ interface RadialGaugesProps {
   strain: StrainBreakdown;
   sleepPlan: SleepDebtPlan;
   hasAnyData: boolean;
-  onSelectMetric: (metric: DrilldownMetricType) => void;
+  onOpenPage: (page: DedicatedPageId) => void;
 }
 
-interface SingleGaugeProps {
+interface RingProps {
   label: string;
   valueText: string;
   subText: string;
@@ -26,7 +26,7 @@ interface SingleGaugeProps {
   onClick: () => void;
 }
 
-const SingleTelemetryRing: React.FC<SingleGaugeProps> = ({
+const TelemetryRing: React.FC<RingProps> = ({
   label,
   valueText,
   subText,
@@ -36,19 +36,19 @@ const SingleTelemetryRing: React.FC<SingleGaugeProps> = ({
   dimmed,
   onClick,
 }) => {
-  const size = 108;
-  const strokeWidth = 7.5;
+  const size = 104;
+  const strokeWidth = 7;
   const radius = (size - strokeWidth * 2) / 2;
   const circumference = 2 * Math.PI * radius;
-  const clamped = dimmed ? 0 : Math.max(0.03, Math.min(1, progress));
+  const clamped = dimmed ? 0 : Math.max(0.04, Math.min(1, progress));
   const dashOffset = circumference * (1 - clamped);
 
   return (
     <button
       type="button"
       onClick={onClick}
-      className="group flex flex-col items-center rounded-2xl p-2 transition-all active:scale-[0.97] hover:bg-white/[0.03] focus:outline-none"
-      aria-label={`Inspect ${label}`}
+      className="group flex flex-col items-center rounded-2xl py-2.5 px-1 transition hover:bg-white/[0.035] active:scale-[0.96] focus:outline-none"
+      aria-label={`Open ${label} page`}
     >
       <div className="relative flex items-center justify-center">
         <svg
@@ -56,14 +56,14 @@ const SingleTelemetryRing: React.FC<SingleGaugeProps> = ({
           height={size}
           viewBox={`0 0 ${size} ${size}`}
           className="-rotate-90 overflow-visible"
-          style={dimmed ? undefined : { filter: `drop-shadow(0 0 12px ${glowRgba})` }}
+          style={dimmed ? undefined : { filter: `drop-shadow(0 0 11px ${glowRgba})` }}
         >
           <circle
             cx={size / 2}
             cy={size / 2}
             r={radius}
             fill="none"
-            stroke="rgba(255,255,255,0.08)"
+            stroke="rgba(255,255,255,0.07)"
             strokeWidth={strokeWidth}
           />
           {!dimmed && (
@@ -82,17 +82,15 @@ const SingleTelemetryRing: React.FC<SingleGaugeProps> = ({
           )}
         </svg>
         <div className="absolute inset-0 flex flex-col items-center justify-center">
-          <span className={`tabular-mono text-xl font-bold tracking-tight ${dimmed ? 'text-slate-500' : 'text-slate-50'}`}>
+          <span className={`tabular-mono text-[20px] font-bold tracking-tight ${dimmed ? 'text-slate-500' : 'text-white'}`}>
             {valueText}
           </span>
-          <span className="mt-0.5 text-[10px] font-medium uppercase tracking-wider text-slate-400">
+          <span className="mt-0.5 text-[9.5px] font-medium uppercase tracking-wider text-slate-400">
             {subText}
           </span>
         </div>
       </div>
-      <span className="mt-2 text-xs font-semibold text-slate-200 group-hover:text-white">
-        {label}
-      </span>
+      <span className="mt-2 text-xs font-medium text-slate-300 group-hover:text-white">{label}</span>
     </button>
   );
 };
@@ -102,27 +100,24 @@ export const RadialGauges: React.FC<RadialGaugesProps> = ({
   strain,
   sleepPlan,
   hasAnyData,
-  onSelectMetric,
+  onOpenPage,
 }) => {
   const recoveryGlow =
     recovery.state === 'optimal'
-      ? 'rgba(16, 185, 129, 0.35)'
+      ? 'rgba(16, 185, 129, 0.34)'
       : recovery.state === 'moderate'
-        ? 'rgba(245, 158, 11, 0.35)'
-        : 'rgba(244, 63, 94, 0.38)';
+        ? 'rgba(245, 158, 11, 0.34)'
+        : 'rgba(244, 63, 94, 0.36)';
 
   return (
-    <section className="aether-glass rounded-3xl p-4 shadow-glass">
+    <section className="aether-card rounded-3xl p-4">
       <div className="mb-3 flex items-center justify-between gap-2 px-1">
-        <div>
-          <h2 className="text-xs font-semibold uppercase tracking-[0.14em] text-slate-300">
-            Daily Telemetry Rings
-          </h2>
-          <p className="text-[11px] text-slate-500">Tap any ring for granular breakdown</p>
-        </div>
+        <span className="text-[11px] font-semibold uppercase tracking-[0.14em] text-slate-400">
+          Daily Readiness
+        </span>
         <button
           type="button"
-          onClick={() => onSelectMetric('recovery')}
+          onClick={() => onOpenPage('recovery')}
           className="inline-flex items-center gap-1.5 rounded-full border border-white/10 bg-white/[0.04] px-2.5 py-1 text-[10px] font-medium text-slate-300 transition hover:border-emerald-400/40"
         >
           {recovery.score !== null ? (
@@ -135,7 +130,7 @@ export const RadialGauges: React.FC<RadialGaugesProps> = ({
       </div>
 
       <div className="grid grid-cols-3 gap-1">
-        <SingleTelemetryRing
+        <TelemetryRing
           label="Recovery"
           valueText={recovery.score !== null ? `${recovery.score}%` : '--'}
           subText={recovery.score !== null ? recovery.state : 'no data'}
@@ -143,19 +138,19 @@ export const RadialGauges: React.FC<RadialGaugesProps> = ({
           colorHex={recovery.colorHex}
           glowRgba={recoveryGlow}
           dimmed={recovery.score === null}
-          onClick={() => onSelectMetric('recovery')}
+          onClick={() => onOpenPage('recovery')}
         />
-        <SingleTelemetryRing
+        <TelemetryRing
           label="Strain"
           valueText={hasAnyData ? strain.score.toFixed(1) : '--'}
-          subText={hasAnyData ? 'of 21.0' : 'no data'}
+          subText={hasAnyData ? 'of 21' : 'no data'}
           progress={strain.score / 21}
           colorHex="#06B6D4"
           glowRgba="rgba(6, 182, 212, 0.34)"
           dimmed={!hasAnyData || strain.score === 0}
-          onClick={() => onSelectMetric('strain')}
+          onClick={() => onOpenPage('strain')}
         />
-        <SingleTelemetryRing
+        <TelemetryRing
           label="Sleep"
           valueText={sleepPlan.sleepPerformancePct !== null ? `${sleepPlan.sleepPerformancePct}%` : '--'}
           subText={sleepPlan.sleepPerformancePct !== null ? 'perf' : 'no data'}
@@ -163,9 +158,10 @@ export const RadialGauges: React.FC<RadialGaugesProps> = ({
           colorHex="#818CF8"
           glowRgba="rgba(129, 140, 248, 0.34)"
           dimmed={sleepPlan.sleepPerformancePct === null}
-          onClick={() => onSelectMetric('sleep')}
+          onClick={() => onOpenPage('sleep')}
         />
       </div>
+      <p className="mt-1 text-center text-[11px] text-slate-500">Tap any ring to open its full analysis page</p>
     </section>
   );
 };
