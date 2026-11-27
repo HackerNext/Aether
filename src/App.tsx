@@ -176,6 +176,8 @@ export default function App() {
 
   // Scroll to top cleanly whenever opening a dedicated page or switching tabs
   useEffect(() => {
+    const rootEl = document.getElementById('root');
+    if (rootEl) rootEl.scrollTop = 0;
     window.scrollTo(0, 0);
   }, [activePage, activeTab]);
 
@@ -589,7 +591,7 @@ export default function App() {
     <div className="min-h-screen bg-[#07090D] text-slate-100">
       <div className="pointer-events-none fixed inset-x-0 top-0 h-52 bg-gradient-to-b from-emerald-500/[0.05] via-cyan-500/[0.02] to-transparent" />
 
-      <div className="relative mx-auto flex min-h-screen w-full max-w-[460px] flex-col px-4 pb-28 safe-top">
+      <div className="relative mx-auto flex min-h-screen w-full max-w-[460px] flex-col px-4 pb-32 safe-top">
         {/* Minimal Brand Header + Honest Connection Status Pill */}
         <header className="mb-5 pt-2 space-y-3">
           <div className="flex items-center justify-between px-0.5">
